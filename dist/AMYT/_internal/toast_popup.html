@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8"/>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100%; height: 100%;
+      background: transparent;
+      overflow: hidden;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      -webkit-user-select: none; user-select: none;
+    }
+    .toast-wrap {
+      position: fixed; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      padding: 10px;
+    }
+    .toast-box {
+      display: flex; align-items: flex-start; gap: 12px;
+      padding: 14px 18px 17px;
+      border-radius: 14px; border: 2px solid transparent;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.45), 0 2px 8px rgba(0,0,0,0.25);
+      width: 100%; position: relative;
+      opacity: 0; transform: translateY(14px) scale(.94);
+      transition: opacity .22s ease, transform .22s cubic-bezier(.34,1.56,.64,1);
+    }
+    .toast-box.visible { opacity: 1; transform: translateY(0) scale(1); }
+    .toast-box.hiding  { opacity: 0; transform: translateY(8px) scale(.96);
+                         transition: opacity .16s ease, transform .16s ease; }
+    .toast-box.info    { background: linear-gradient(135deg,#1e1650,#130e38); border-color:#85C79A; color:#EDF7BD; }
+    .toast-box.warn    { background: linear-gradient(135deg,#2e2000,#1e1500); border-color:#f0b429; color:#fff8e7; }
+    .toast-box.error   { background: linear-gradient(135deg,#2e0808,#1e0404); border-color:#e94560; color:#ffe0e0; }
+    .toast-box.success { background: linear-gradient(135deg,#0a2014,#05120c); border-color:#4AE89A; color:#d4f5e2; }
+    .toast-icon  { font-size:22px; line-height:1; flex-shrink:0; margin-top:1px; }
+    .toast-body  { flex:1; min-width:0; }
+    .toast-title { font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.09em; opacity:.55; margin-bottom:4px; }
+    .toast-msg   { font-size:14px; font-weight:600; line-height:1.45; word-break:break-word; }
+    .toast-progress { position:absolute; bottom:0; left:0; height:3px; border-radius:0 0 12px 12px; width:100%; transform-origin:left center; }
+    .toast-box.info    .toast-progress { background:#85C79A; }
+    .toast-box.warn    .toast-progress { background:#f0b429; }
+    .toast-box.error   .toast-progress { background:#e94560; }
+    .toast-box.success .toast-progress { background:#4AE89A; }
+    .toast-close { position:absolute; top:7px; right:9px; width:18px; height:18px; border:none; background:none;
+                   color:inherit; opacity:.35; font-size:13px; cursor:pointer; border-radius:50%;
+                   display:flex; align-items:center; justify-content:center; transition:opacity .15s,background .15s; }
+    .toast-close:hover { opacity:1; background:rgba(255,255,255,.12); }
+  </style>
+</head>
+<body>
+  <div class="toast-wrap">
+    <div class="toast-box info" id="box">
+      <div class="toast-icon" id="icon">ℹ️</div>
+      <div class="toast-body">
+        <div class="toast-title" id="title">Info</div>
+        <div class="toast-msg"   id="msg">…</div>
+      </div>
+      <button class="toast-close" onclick="dismissToast()">✕</button>
+      <div class="toast-progress" id="progress"></div>
+    </div>
+  </div>
+  <script>
+    let _hideTimer = null;
+    const ICONS  = { info:'ℹ️', warn:'⚠️', error:'❌', success:'✅' };
+    const TITLES = { info:'Info', warn:'Warning', error:'Error', success:'Success' };
+
+    function showToast(message, type, duration) {
+      type = type || 'info';
+      duration = duration || 3000;
+      const box  = document.getElementById('box');
+      const prog = document.getElementById('progress');
+      document.getElementById('icon').textContent  = ICONS[type]  || 'ℹ️';
+      document.getElementById('title').textContent = TITLES[type] || 'Info';
+      document.getElementById('msg').textContent   = message;
+      box.className = 'toast-box ' + type;
+      requestAnimationFrame(() => requestAnimationFrame(() => box.classList.add('visible')));
+      prog.style.transition = 'none';
+      prog.style.transform  = 'scaleX(1)';
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        prog.style.transition = `transform ${duration}ms linear`;
+        prog.style.transform  = 'scaleX(0)';
+      }));
+      clearTimeout(_hideTimer);
+      _hideTimer = setTimeout(dismissToast, duration);
+    }
+
+    function dismissToast() {
+      clearTimeout(_hideTimer);
+      const box = document.getElementById('box');
+      box.classList.remove('visible');
+      box.classList.add('hiding');
+      setTimeout(() => {
+        box.classList.remove('hiding');
+        if (window.pywebview && window.pywebview.api) {
+          window.pywebview.api.hide_toast_window();
+        }
+      }, 180);
+    }
+
+    document.querySelector('.toast-wrap').addEventListener('click', (e) => {
+      if (!e.target.classList.contains('toast-close')) dismissToast();
+    });
+  </script>
+</body>
+</html>

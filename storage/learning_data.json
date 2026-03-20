@@ -1,0 +1,28 @@
+{
+  "mine_dow": {
+    "templates": [
+      "mine_dow"
+    ],
+    "best_offset": [
+      0,
+      0
+    ],
+    "success_rate": 0.0,
+    "detections": 12,
+    "successes": 0,
+    "region": null
+  },
+  "ss": {
+    "templates": [
+      "ss"
+    ],
+    "best_offset": [
+      0,
+      0
+    ],
+    "success_rate": 0.29,
+    "detections": 14,
+    "successes": 4,
+    "region": null
+  }
+}

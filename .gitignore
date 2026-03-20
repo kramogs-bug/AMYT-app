@@ -1,0 +1,22 @@
+# Build output — never commit these
+dist/
+build/
+*.spec.bak
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+
+# App storage — user data, not source
+storage/templates/
+storage/scripts/
+storage/learning_data.json
+storage/macro_db.json
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini

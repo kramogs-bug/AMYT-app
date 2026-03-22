@@ -20,6 +20,12 @@ import time
 import pyautogui
 
 try:
+    import keyboard as _keyboard
+    _KEYBOARD_AVAILABLE = True
+except ImportError:
+    _KEYBOARD_AVAILABLE = False
+
+try:
     import pydirectinput
     pydirectinput.PAUSE = 0.02
     DIRECTINPUT_AVAILABLE = True
@@ -154,13 +160,34 @@ class KeyboardControl:
 
     def type_text(self, text: str, interval: float = 0.05):
         self._ensure_target_focused()
-        pyautogui.typewrite(text, interval=interval)
+        # Always coerce to str — passing int/float to typewrite raises or silently
+        # drops characters (e.g. "TYPE 12345" evaluates to int 12345 without this).
+        text = str(text)
+        if _KEYBOARD_AVAILABLE:
+            # keyboard.write() handles digits, punctuation, unicode, and all
+            # printable chars that pyautogui.typewrite() silently drops.
+            _keyboard.write(text, delay=interval)
+        else:
+            # Fallback: pyautogui handles basic ASCII only; non-ASCII and some
+            # special chars will be skipped.
+            for char in text:
+                try:
+                    pyautogui.typewrite(char, interval=interval)
+                except Exception:
+                    pass   # skip unencodable char rather than crash
         self.logger.log(f"Typed: {text}")
 
     def type_with_delay(self, text: str, delay: float = 0.1):
         self._ensure_target_focused()
-        for char in text:
-            pyautogui.typewrite(char, interval=delay)
+        text = str(text)
+        if _KEYBOARD_AVAILABLE:
+            _keyboard.write(text, delay=delay)
+        else:
+            for char in text:
+                try:
+                    pyautogui.typewrite(char, interval=delay)
+                except Exception:
+                    pass
         self.logger.log(f"Typed with delay: {text}")
 
     # ── HOTKEYS / COMBOS ──────────────────────────────────

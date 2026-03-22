@@ -44,11 +44,7 @@
 ">
   <!-- Logo / icon -->
   <div style="display:flex;align-items:center;gap:14px">
-    <svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <rect width="48" height="48" rx="12" fill="rgba(133,199,154,0.15)"/>
-      <polygon points="14,12 38,24 14,36" fill="#85C79A"/>
-      <rect x="11" y="11" width="5" height="26" rx="2.5" fill="#85C79A" opacity="0.5"/>
-    </svg>
+    <img src="logo.png" style="width:64px;height:64px;object-fit:contain;border-radius:12px"/>
     <div>
       <div style="font-size:26px;font-weight:800;color:#ffffff;letter-spacing:-.5px;line-height:1">AMYT</div>
       <div style="font-size:12px;color:rgba(133,199,154,0.8);font-weight:500;letter-spacing:.08em;text-transform:uppercase">Macro Automation</div>
@@ -140,6 +136,8 @@
 
 <div class="app-shell">
 
+<div class="app-body">
+
 <!-- Sidebar toggle tab — floats on right edge of sidebar, always clickable -->
 <button id="sidebar-toggle-tab" onclick="toggleSidebar()" title="Toggle sidebar"
   style="
@@ -167,7 +165,9 @@
 
     <!-- Brand -->
     <div class="sidebar-brand">
-      <div class="brand-icon"><svg class="icon icon-brand" aria-hidden="true"><use href="#i-zap"/></svg></div>
+      <div class="brand-icon" style="background:none;padding:0;overflow:hidden;border-radius:0.8rem">
+        <img src="logo.png" style="width:3.2rem;height:3.2rem;object-fit:contain;display:block;border-radius:0.8rem"/>
+      </div>
       <div class="brand-text">AM<span>YT</span></div>
       <span id="app-version-badge" style="
         font-size:9px;font-weight:700;letter-spacing:.04em;
@@ -696,29 +696,44 @@
 
             <!-- SAVE / LOAD TOOLBAR -->
             <div class="savload-bar">
-              <div class="savload-left">
-                <span class="savload-filename" id="savload-filename">unsaved</span>
+              <!-- File dropdown menu -->
+              <div class="file-menu-wrap" id="file-menu-wrap">
+                <button class="btn btn-secondary file-menu-btn" onclick="toggleFileMenu()" id="file-menu-btn">
+                  <svg class="icon" aria-hidden="true"><use href="#i-folder-open"/></svg>
+                  File
+                  <svg style="width:1em;height:1em;margin-left:2px;opacity:0.6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
+                <div class="file-menu-dropdown hidden" id="file-menu-dropdown">
+                  <button class="file-menu-item" onclick="loadScriptDialog();closeFileMenu()">
+                    <svg class="icon" aria-hidden="true"><use href="#i-folder-open"/></svg> Open File
+                  </button>
+                  <div class="file-menu-sep"></div>
+                  <button class="file-menu-item" onclick="saveScriptQuick();closeFileMenu()" id="btn-quick-save" disabled>
+                    <svg class="icon" aria-hidden="true"><use href="#i-save"/></svg> Save <span style="opacity:0.5;font-size:1.05rem;margin-left:auto">Ctrl+S</span>
+                  </button>
+                  <button class="file-menu-item" onclick="saveScriptDialog();closeFileMenu()">
+                    <svg class="icon" aria-hidden="true"><use href="#i-save"/></svg> Save As…
+                  </button>
+                  <div class="file-menu-sep"></div>
+                  <button class="file-menu-item" onclick="openAmytExport();closeFileMenu()">
+                    <svg class="icon" aria-hidden="true"><use href="#i-share"/></svg> Share as .amyt
+                  </button>
+                  <button class="file-menu-item" onclick="openAmytImport();closeFileMenu()">
+                    <svg class="icon" aria-hidden="true"><use href="#i-download"/></svg> Import .amyt
+                  </button>
+                  <div class="file-menu-sep"></div>
+                  <button class="file-menu-item" onclick="openFindReplace(false);closeFileMenu()">
+                    <svg class="icon" aria-hidden="true"><use href="#i-search"/></svg> Find &amp; Replace <span style="opacity:0.5;font-size:1.05rem;margin-left:auto">Ctrl+F</span>
+                  </button>
+                </div>
               </div>
-              <div class="savload-right">
-                <button class="btn btn-secondary" onclick="openFindReplace(false)" title="Find &amp; Replace (Ctrl+F)">
-                  <svg class="icon" aria-hidden="true"><use href="#i-search"/></svg><span class="savload-btn-text"> Find</span>
-                </button>
-                <button class="btn btn-secondary" onclick="saveScriptDialog()" title="Save As...">
-                  <svg class="icon" aria-hidden="true"><use href="#i-save"/></svg><span class="savload-btn-text"> Save As</span>
-                </button>
-                <button class="btn btn-secondary" onclick="saveScriptQuick()" title="Quick save" id="btn-quick-save" disabled>
-                  <svg class="icon" aria-hidden="true"><use href="#i-save"/></svg><span class="savload-btn-text"> Save</span>
-                </button>
-                <button class="btn btn-secondary" onclick="loadScriptDialog()" title="Open file">
-                  <svg class="icon" aria-hidden="true"><use href="#i-folder-open"/></svg><span class="savload-btn-text"> Open</span>
-                </button>
-                <button class="btn btn-secondary" onclick="openAmytExport()" title="Share as .amyt package">
-                  <svg class="icon" aria-hidden="true"><use href="#i-share"/></svg><span class="savload-btn-text"> Share</span>
-                </button>
-                <button class="btn btn-secondary" onclick="openAmytImport()" title="Import a .amyt package">
-                  <svg class="icon" aria-hidden="true"><use href="#i-download"/></svg><span class="savload-btn-text"> Import</span>
-                </button>
-              </div>
+
+              <!-- Filename display -->
+              <span class="savload-filename" id="savload-filename">unsaved</span>
+
+              <!-- Quick save indicator dot — shows when unsaved changes exist -->
+              <span id="unsaved-dot" title="Unsaved changes"
+                style="width:7px;height:7px;border-radius:50%;background:#f39c12;display:none;flex-shrink:0"></span>
             </div>
 
             <!-- SCRIPT BUILDER TOOLBAR -->
@@ -729,8 +744,10 @@
                   <div class="coord-tracker">
                     <svg class="icon" aria-hidden="true"><use href="#i-mouse"/></svg>
                     <span id="coord-display" class="coord-display">X: — &nbsp; Y: —</span>
-                    <button class="btn btn-xs coord-track-btn" id="coord-track-btn" onclick="toggleCoordTracking()">&#9654; Track</button>
-                    <button class="btn btn-xs" onclick="insertCursorPos()" title="Insert current coords into script"><svg class="icon" aria-hidden="true"><use href="#i-pin"/></svg> Insert</button>
+                    <div class="coord-btn-group">
+                      <button class="btn btn-xs coord-track-btn" id="coord-track-btn" onclick="toggleCoordTracking()">&#9654; Track</button>
+                      <button class="btn btn-xs" onclick="insertCursorPos()" title="Insert current coords into script"><svg class="icon" aria-hidden="true"><use href="#i-pin"/></svg> Insert</button>
+                    </div>
                     <span class="coord-hint" id="coord-hint"></span>
                   </div>
                 </div>
@@ -1467,12 +1484,20 @@
 
             <!-- Sliders -->
             <div class="settings-row" style="align-items:center;gap:12px">
-              <div class="settings-label">Arrival region (px)</div>
+              <div class="settings-label">Arrival region width (px)</div>
               <input type="range" id="arrival-region-slider" min="50" max="800" step="10" value="200"
                 style="flex:1" oninput="arrivalSliderChange()"/>
               <input type="number" id="movement-arrival-region" class="cfg-input" value="200"
                 step="10" min="50" max="800" style="width:70px"
                 oninput="arrivalInputChange()"/>
+            </div>
+            <div class="settings-row" style="align-items:center;gap:12px;margin-top:6px">
+              <div class="settings-label">Arrival region height (px)</div>
+              <input type="range" id="arrival-region-h-slider" min="50" max="800" step="10" value="200"
+                style="flex:1" oninput="arrivalHSliderChange()"/>
+              <input type="number" id="movement-arrival-region-h" class="cfg-input" value="200"
+                step="10" min="50" max="800" style="width:70px"
+                oninput="arrivalHInputChange()"/>
             </div>
             <div class="settings-row" style="align-items:center;gap:12px;margin-top:6px">
               <div class="settings-label">Arrival confidence</div>
@@ -1483,7 +1508,7 @@
                 oninput="arrivalConfInputChange()"/>
             </div>
             <div class="cfg-hint" style="margin-top:6px">
-              <strong>Arrival region</strong> — size of the scan box around the player. Larger = stops earlier.<br>
+              <strong>Arrival region width / height</strong> — size of the scan box around the player. Set width and height independently for a rectangular zone. Larger = stops earlier.<br>
               <strong>Arrival confidence</strong> — how sure the match must be inside that box to stop. Higher = must be very close.
             </div>
 
@@ -1514,10 +1539,11 @@
           <div class="settings-group">
             <div class="settings-group-title">Using in Scripts</div>
             <div class="cfg-hint">
-              <code>NAVIGATE_TO_IMAGE template confidence [offsetX offsetY] [timeout=N] [arrival_region=N] [arrival_confidence=N]</code><br><br>
+              <code>NAVIGATE_TO_IMAGE template confidence [offsetX offsetY] [timeout=N] [arrival_region=N] [arrival_region_h=N] [arrival_confidence=N]</code><br><br>
               <strong>Basic:</strong> <code>NAVIGATE_TO_IMAGE ore 0.8</code><br>
               <strong>With offset:</strong> <code>NAVIGATE_TO_IMAGE ore 0.8 0 -20</code><br>
-              <strong>Custom arrival:</strong> <code>NAVIGATE_TO_IMAGE ore 0.8 arrival_region=150 arrival_confidence=0.90</code><br><br>
+              <strong>Custom arrival (square):</strong> <code>NAVIGATE_TO_IMAGE ore 0.8 arrival_region=150 arrival_confidence=0.90</code><br>
+              <strong>Custom arrival (rect):</strong> <code>NAVIGATE_TO_IMAGE ore 0.8 arrival_region=300 arrival_region_h=150</code><br><br>
               <span style="color:var(--text2)">
                 <code>arrival_region</code> and <code>arrival_confidence</code> are optional — if omitted the values from settings above are used.
               </span>
@@ -1528,20 +1554,27 @@
     </div>
 
     <!-- ══ SHORTCUT HINT BAR (bottom of main-area) ═════════ -->
-    <div class="shortcut-bar" id="shortcut-bar">
-      <span class="shortcut-bar-item" id="sb-play"></span>
-      <span class="shortcut-bar-divider">|</span>
-      <span class="shortcut-bar-item" id="sb-stop"></span>
-      <span class="shortcut-bar-divider">|</span>
-      <span class="shortcut-bar-item" id="sb-pause"></span>
-      <span class="shortcut-bar-divider">|</span>
-      <a href="https://discord.com/users/itzmekramogs" target="_blank" class="shortcut-bar-item discord-link" title="Join the Discord server">
-        <svg class="icon" aria-hidden="true"><use href="#i-discord"/></svg> Creator
-      </a>
-    </div>
   </div>
   <!-- /MAIN AREA -->
 
+</div>
+<!-- /APP BODY -->
+
+</div>
+<!-- /APP SHELL -->
+
+<!-- shortcut-bar: direct child of body, always visible on every tab -->
+<div class="shortcut-bar" id="shortcut-bar">
+    <span class="shortcut-bar-item" id="sb-play"></span>
+    <span class="shortcut-bar-divider">|</span>
+    <span class="shortcut-bar-item" id="sb-stop"></span>
+    <span class="shortcut-bar-divider">|</span>
+    <span class="shortcut-bar-item" id="sb-pause"></span>
+    <span class="shortcut-bar-divider">|</span>
+    <a href="https://discord.com/users/itzmekramogs" target="_blank" class="discord-link" title="Contact the creator">
+      <svg class="icon" aria-hidden="true" style="width:14px;height:14px"><use href="#i-discord"/></svg> Creator
+    </a>
+  </div>
 </div>
 <!-- /APP SHELL -->
 
@@ -1633,6 +1666,50 @@
 
 <!-- Sidebar toggle + Accordion (small additions, no conflict with modules) -->
 <script>
+function toggleFileMenu() {
+  const drop = document.getElementById('file-menu-dropdown');
+  const wrap = document.getElementById('file-menu-wrap');
+  if (!drop) return;
+  const isOpen = !drop.classList.contains('hidden');
+  if (isOpen) { closeFileMenu(); return; }
+  drop.classList.remove('hidden');
+  wrap.classList.add('file-menu-open');
+  // Close when clicking outside
+  setTimeout(() => {
+    document.addEventListener('click', _fileMenuOutside, { capture: true, once: true });
+  }, 10);
+}
+
+function closeFileMenu() {
+  document.getElementById('file-menu-dropdown')?.classList.add('hidden');
+  document.getElementById('file-menu-wrap')?.classList.remove('file-menu-open');
+}
+
+function _fileMenuOutside(e) {
+  const wrap = document.getElementById('file-menu-wrap');
+  if (wrap && !wrap.contains(e.target)) closeFileMenu();
+  else if (wrap && wrap.contains(e.target)) {
+    // clicked inside — let it close after action
+    setTimeout(closeFileMenu, 200);
+  }
+}
+
+// Show/hide unsaved dot
+function _setUnsavedDot(dirty) {
+  const dot = document.getElementById('unsaved-dot');
+  if (dot) dot.style.display = dirty ? 'inline-block' : 'none';
+}
+
+// Ctrl+S → quick save
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+    e.preventDefault();
+    const btn = document.getElementById('btn-quick-save');
+    if (btn && !btn.disabled) saveScriptQuick();
+    else saveScriptDialog();
+  }
+});
+
 function toggleSidebar() {
   const sidebar  = document.getElementById('sidebar');
   const tab      = document.getElementById('sidebar-toggle-tab');
@@ -2049,7 +2126,8 @@ function showCsTab(name) {
           <thead><tr><th>Parameter</th><th>Default</th><th>What it does</th></tr></thead>
           <tbody>
             <tr><td><code>confidence</code></td><td>0.8</td><td>How similar the template must look to trigger (0.0–1.0). Lower = easier to match but more false positives.</td></tr>
-            <tr><td><code>arrival_region</code></td><td>200</td><td>Size in pixels of the box around the player to scan. When the target appears inside this box, navigation stops.</td></tr>
+            <tr><td><code>arrival_region</code></td><td>200</td><td>Width in pixels of the box around the player to scan. When the target appears inside this box, navigation stops.</td></tr>
+            <tr><td><code>arrival_region_h</code></td><td>arrival_region</td><td>Height in pixels of the arrival box. If omitted, defaults to <code>arrival_region</code> (square). Set independently for a rectangular zone.</td></tr>
             <tr><td><code>arrival_confidence</code></td><td>0.85</td><td>Confidence required inside the arrival region to count as arrived. Higher = must be very close.</td></tr>
             <tr><td><code>miss_tolerance</code></td><td>3</td><td>How many consecutive frames the target can be missing before navigation stops. Increase for games with loading screens or brief UI overlays.</td></tr>
             <tr><td><code>timeout</code></td><td>0</td><td>Maximum seconds before giving up. 0 = no timeout.</td></tr>
@@ -3205,11 +3283,18 @@ function showCsTab(name) {
         <label class="cfg-label">Arrival Detection <span style="font-weight:400;color:#888;font-size:11px">— stops when target is found near player</span></label>
         <div style="display:flex;flex-direction:column;gap:8px;margin-top:4px;padding:10px;background:var(--bg2);border-radius:8px;border:1px solid var(--border)">
           <div style="display:flex;align-items:center;gap:8px">
-            <span style="font-size:12px;color:var(--text2);width:130px;flex-shrink:0">Arrival region (px)</span>
+            <span style="font-size:12px;color:var(--text2);width:130px;flex-shrink:0">Arrival width (px)</span>
             <input type="range" id="img-arrival-region-slider" min="50" max="600" step="10" value="200"
               style="flex:1" oninput="document.getElementById('img-arrival-region').value=this.value;imgActionPreview()"/>
             <input type="number" id="img-arrival-region" class="cfg-input" value="200" min="50" max="600" step="10"
               style="width:64px" oninput="document.getElementById('img-arrival-region-slider').value=this.value;imgActionPreview()"/>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:12px;color:var(--text2);width:130px;flex-shrink:0">Arrival height (px)</span>
+            <input type="range" id="img-arrival-region-h-slider" min="50" max="600" step="10" value="200"
+              style="flex:1" oninput="document.getElementById('img-arrival-region-h').value=this.value;imgActionPreview()"/>
+            <input type="number" id="img-arrival-region-h" class="cfg-input" value="200" min="50" max="600" step="10"
+              style="width:64px" oninput="document.getElementById('img-arrival-region-h-slider').value=this.value;imgActionPreview()"/>
           </div>
           <div style="display:flex;align-items:center;gap:8px">
             <span style="font-size:12px;color:var(--text2);width:130px;flex-shrink:0">Arrival confidence</span>
@@ -3525,6 +3610,114 @@ function showCsTab(name) {
     </div>
   </div>
 </div>
+
+
+<!-- ══════════════════════════════════════════════════════
+     CLOSE CONFIRMATION MODAL
+     Shown when user tries to close with unsaved changes.
+════════════════════════════════════════════════════════ -->
+<div id="close-confirm-overlay" class="cfg-overlay hidden">
+  <div class="cfg-modal" style="width:38rem">
+    <div class="cfg-title">
+      <svg class="icon" aria-hidden="true" style="color:var(--color-warn)"><use href="#i-alert-triangle"/></svg>
+      Unsaved Changes
+    </div>
+    <div class="cfg-body">
+      <p style="font-size:1.35rem;color:var(--color-text);line-height:1.6">
+        Your script <strong id="close-confirm-filename">has unsaved changes</strong>.<br>
+        What would you like to do before closing?
+      </p>
+    </div>
+    <div class="cfg-actions" style="flex-direction:column;gap:0.7rem">
+      <button class="btn btn-play" style="width:100%;justify-content:center" onclick="closeConfirmSaveAndClose()">
+        <svg class="icon" aria-hidden="true"><use href="#i-save"/></svg> Save &amp; Close
+      </button>
+      <div style="display:flex;gap:0.7rem">
+        <button class="btn btn-danger" style="flex:1;justify-content:center" onclick="closeConfirmDiscard()">
+          Close Without Saving
+        </button>
+        <button class="btn btn-secondary" style="flex:1;justify-content:center" onclick="closeConfirmCancel()">
+          Cancel
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Remote control handlers (app_enabled, force_update, message) ── -->
+<script>
+// Called when developer sets app_enabled: false in control.json
+window._amytRemoteDisabled = function(msg) {
+  // Blur everything and show a full-screen block overlay
+  document.body.style.filter = 'blur(6px) grayscale(1)';
+  document.body.style.pointerEvents = 'none';
+  const el = document.createElement('div');
+  el.style.cssText = [
+    'position:fixed','inset:0','z-index:99999',
+    'background:rgba(0,0,0,0.85)',
+    'display:flex','flex-direction:column',
+    'align-items:center','justify-content:center',
+    'color:#fff','font-family:Segoe UI,sans-serif','text-align:center','padding:40px'
+  ].join(';');
+  el.innerHTML = `
+    <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="#e74c3c" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom:20px">
+      <circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
+    </svg>
+    <div style="font-size:22px;font-weight:700;margin-bottom:12px">App Unavailable</div>
+    <div style="font-size:15px;color:#ccc;max-width:420px;line-height:1.6">${msg}</div>
+  `;
+  document.body.appendChild(el);
+};
+
+// Called when developer sets message: "..." in control.json
+window._amytRemoteMessage = function(msg) {
+  if (!msg) return;
+  // Show as a dismissable banner at the top
+  const el = document.createElement('div');
+  el.style.cssText = [
+    'position:fixed','top:0','left:0','right:0','z-index:9999',
+    'background:#2980b9','color:#fff',
+    'padding:10px 20px','font-size:13px',
+    'display:flex','align-items:center','justify-content:space-between',
+    'font-family:Segoe UI,sans-serif','box-shadow:0 2px 8px rgba(0,0,0,0.3)'
+  ].join(';');
+  el.innerHTML = `
+    <span>📢 ${msg}</span>
+    <button onclick="this.parentElement.remove()" style="background:none;border:none;color:#fff;font-size:18px;cursor:pointer;padding:0 4px">×</button>
+  `;
+  document.body.prepend(el);
+};
+
+// Called when developer sets force_update: true or min_version is higher than current
+window._amytForceUpdate = function(data) {
+  document.body.style.filter = 'blur(4px)';
+  document.body.style.pointerEvents = 'none';
+  const el = document.createElement('div');
+  el.style.cssText = [
+    'position:fixed','inset:0','z-index:99999',
+    'background:rgba(0,0,0,0.88)',
+    'display:flex','flex-direction:column',
+    'align-items:center','justify-content:center',
+    'color:#fff','font-family:Segoe UI,sans-serif','text-align:center','padding:40px'
+  ].join(';');
+  el.innerHTML = `
+    <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="#f39c12" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom:20px">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+      <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+    </svg>
+    <div style="font-size:22px;font-weight:700;margin-bottom:12px">Update Required</div>
+    <div style="font-size:15px;color:#ccc;max-width:420px;line-height:1.6;margin-bottom:28px">
+      You are running version <strong>${data.current}</strong>.<br>
+      Version <strong>${data.min_version}</strong> or higher is required to continue.
+    </div>
+    <button onclick="window.pywebview.api.open_url('${data.download_url}')"
+      style="background:#f39c12;color:#000;border:none;padding:12px 32px;border-radius:8px;font-size:15px;font-weight:700;cursor:pointer">
+      Download Update
+    </button>
+  `;
+  document.body.appendChild(el);
+};
+</script>
 
 </body>
 </html>

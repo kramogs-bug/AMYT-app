@@ -13,6 +13,7 @@ Fixes applied:
   Disable it in production tight loops to avoid stdout I/O blocking the GIL.
 """
 
+import sys
 import os
 import datetime
 import logging
@@ -23,7 +24,11 @@ class Logger:
     def __init__(self, console_output: bool = True, cooldown: float = 10.0):
         self.logs = []
         self._max_memory_logs = 2000
-        self._console = console_output
+        # In a frozen .exe built with console=False there is no console window —
+        # printing is silently dropped at best, and crashes on non-cp1252 characters
+        # (e.g. → U+2192) at worst.  Auto-disable console output when frozen.
+        import sys as _sys
+        self._console = console_output and not getattr(_sys, 'frozen', False)
         self._log_cooldown = cooldown
         self._last_log_time = {}
 
@@ -89,7 +94,15 @@ class Logger:
 
         # Optional console output
         if self._console:
-            print(entry)
+            try:
+                print(entry)
+            except (UnicodeEncodeError, UnicodeDecodeError):
+                # Fallback: re-encode with replacement characters so a single
+                # unencodable char (e.g. → U+2192 on cp1252 stdout) never crashes
+                safe = entry.encode(sys.stdout.encoding or "utf-8", errors="replace").decode(
+                    sys.stdout.encoding or "utf-8", errors="replace"
+                )
+                print(safe)
 
     def get_logs(self):
         """Return all in-memory logs as a list (used by the UI)."""

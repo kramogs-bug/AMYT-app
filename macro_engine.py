@@ -610,6 +610,27 @@ class MacroEngine:
             # Evaluation failed – return the string as‑is
             return expr.strip()
 
+    def _eval_type_arg(self, text: str) -> str:
+        """
+        Variant of _eval_arg for use with TYPE only.
+        Expands $variable references but ALWAYS returns a str — never int or
+        float.  This ensures "TYPE 12345" types the five digit characters and
+        doesn't try to pass the integer 12345 to pyautogui.typewrite(), which
+        only accepts strings and would silently drop or error on a non-string.
+        """
+        if not isinstance(text, str):
+            return str(text)
+        # Expand $var references (same as _eval_arg)
+        def replace_var(m):
+            var_name = m.group(1)
+            if var_name not in self._vars:
+                self.logger.log(f"TYPE: undefined variable ${var_name}", level="WARN")
+                return ""
+            val = self._vars[var_name]
+            return str(val)          # always stringify — even numeric vars
+        expanded = re.sub(r'\$([a-zA-Z_][a-zA-Z0-9_]*)', replace_var, text)
+        return expanded              # return as str, never eval as arithmetic
+
     def _notify_var_update(self, name: str, value):
         """Push variable update to the debug watch panel in real time."""
         if not self._window:
@@ -1063,10 +1084,13 @@ class MacroEngine:
         """
         self._last_cmd_failed = False   # reset per-command error flag
         try:
-            # For TYPE, args is raw string; evaluate it to expand variables
+            # For TYPE, args is raw string; expand $var references but always
+            # keep the result as a str — never coerce to int/float.
+            # "TYPE 12345" must type the characters '1','2','3','4','5', not
+            # evaluate 12345 as a number (which pyautogui.typewrite rejects).
             if cmd == "TYPE":
                 text = args if isinstance(args, str) else " ".join(args)
-                text = self._eval_arg(text)
+                text = self._eval_type_arg(text)
                 self.action.type_text(text)
                 return
 
@@ -1340,6 +1364,7 @@ class MacroEngine:
                 offset_y           = 0
                 nav_timeout        = 0.0
                 arrival_region     = None
+                arrival_region_h   = None
                 arrival_confidence = None
                 miss_tolerance     = None  # None = use settings default (3)
 
@@ -1369,6 +1394,10 @@ class MacroEngine:
                         kw_consumed.add(i)
                     elif low.startswith('arrival_region='):
                         try: arrival_region = int(arg.split('=')[1])
+                        except: pass
+                        kw_consumed.add(i)
+                    elif low.startswith('arrival_region_h='):
+                        try: arrival_region_h = int(arg.split('=')[1])
                         except: pass
                         kw_consumed.add(i)
                     elif low.startswith('arrival_confidence='):
@@ -1405,6 +1434,8 @@ class MacroEngine:
                 # Arrival proximity — fall back to settings if not in script args
                 if arrival_region is None:
                     arrival_region = int(settings.get("arrival_region", 200))
+                if arrival_region_h is None:
+                    arrival_region_h = int(settings.get("arrival_region_h", arrival_region))
                 if arrival_confidence is None:
                     arrival_confidence = float(settings.get("arrival_confidence", 0.85))
                 # Miss tolerance — how many consecutive misses before giving up
@@ -1423,7 +1454,7 @@ class MacroEngine:
                     f"NAVIGATE_TO_IMAGE: heading for '{template}' "
                     f"(confidence={confidence}, timeout={nav_timeout}s, "
                     f"miss_tolerance={miss_tolerance}, "
-                    f"arrival_region={arrival_region}px, arrival_confidence={arrival_confidence})"
+                    f"arrival_region={arrival_region}×{arrival_region_h}px, arrival_confidence={arrival_confidence})"
                 )
 
                 while not self._stop_event.is_set():
@@ -1483,7 +1514,8 @@ class MacroEngine:
                     # if the target is visible (and confident) inside it.
                     # This is smarter than a fixed pixel radius because it
                     # uses the actual image content, not just screen coords.
-                    half = arrival_region // 2
+                    half_w = arrival_region   // 2
+                    half_h = arrival_region_h // 2
                     import ctypes as _ctypes
                     try:
                         _u32 = _ctypes.windll.user32
@@ -1492,10 +1524,10 @@ class MacroEngine:
                         sw, sh = 1920, 1080
 
                     px_region = [
-                        max(0, player_x - half),
-                        max(0, player_y - half),
-                        min(arrival_region, sw - max(0, player_x - half)),
-                        min(arrival_region, sh - max(0, player_y - half)),
+                        max(0, player_x - half_w),
+                        max(0, player_y - half_h),
+                        min(arrival_region,   sw - max(0, player_x - half_w)),
+                        min(arrival_region_h, sh - max(0, player_y - half_h)),
                     ]
 
                     proximity_hit = self.action.detector.find_on_screen(
@@ -1548,8 +1580,9 @@ class MacroEngine:
 
                     # ── Proportional step time ────────────────────────
                     # Slow down as we enter the arrival_region so we don't overshoot.
-                    if distance < arrival_region:
-                        proximity_factor = min(1.0, max(0.15, distance / arrival_region))
+                    _arr_max = max(arrival_region, arrival_region_h)
+                    if distance < _arr_max:
+                        proximity_factor = min(1.0, max(0.15, distance / _arr_max))
                     else:
                         proximity_factor = min(1.0, max(0.25, distance / 100.0))
                     hold_duration = step_time * proximity_factor
@@ -1576,7 +1609,7 @@ class MacroEngine:
                             f"NAVIGATE_TO_IMAGE: keys={hold_keys} "
                             f"hold={hold_duration:.3f}s "
                             f"factor={proximity_factor:.2f}"
-                            + (" [slowing]" if distance < arrival_region else "")
+                            + (" [slowing]" if distance < _arr_max else "")
                         )
                         for k in hold_keys:
                             self.action.keyboard.hold(k)

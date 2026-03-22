@@ -7,7 +7,18 @@ Includes image preprocessing for consistent results and multi-word phrase matchi
 try:
     import pytesseract
     from PIL import Image
-    pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+    import sys as _sys, os as _os
+    # Frozen .exe: look for a tesseract.exe bundled next to AMYT.exe first,
+    # then fall back to the standard install path.
+    if getattr(_sys, 'frozen', False):
+        _exe_dir = _os.path.dirname(_sys.executable)
+        _bundled = _os.path.join(_exe_dir, 'tesseract.exe')
+        if _os.path.isfile(_bundled):
+            pytesseract.pytesseract.tesseract_cmd = _bundled
+        else:
+            pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+    else:
+        pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
     OCR_AVAILABLE = True
 except ImportError:
     OCR_AVAILABLE = False

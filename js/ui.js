@@ -116,10 +116,13 @@ async function loadMovementSettings() {
     document.getElementById('movement-step-time').value = s.step_time;
     document.getElementById('movement-stop-radius').value = s.stop_radius;
     document.getElementById('movement-stuck-threshold').value = s.stuck_threshold;
-    const ar = s.arrival_region ?? 200;
+    const ar  = s.arrival_region   ?? 200;
+    const arh = s.arrival_region_h ?? ar;
     const ac = s.arrival_confidence ?? 0.85;
-    document.getElementById('movement-arrival-region').value = ar;
-    document.getElementById('arrival-region-slider').value   = ar;
+    document.getElementById('movement-arrival-region').value   = ar;
+    document.getElementById('arrival-region-slider').value     = ar;
+    document.getElementById('movement-arrival-region-h').value = arh;
+    document.getElementById('arrival-region-h-slider').value   = arh;
     document.getElementById('movement-arrival-confidence').value = ac;
     document.getElementById('arrival-conf-slider').value        = ac;
     // Target window
@@ -145,7 +148,8 @@ async function saveMovementSettings() {
     step_time: parseFloat(document.getElementById('movement-step-time').value) || 0.1,
     stop_radius: parseInt(document.getElementById('movement-stop-radius').value) || 20,
     stuck_threshold: parseInt(document.getElementById('movement-stuck-threshold').value) || 3,
-    arrival_region: parseInt(document.getElementById('movement-arrival-region').value) || 200,
+    arrival_region:   parseInt(document.getElementById('movement-arrival-region').value)   || 200,
+    arrival_region_h: parseInt(document.getElementById('movement-arrival-region-h').value) || 200,
     arrival_confidence: parseFloat(document.getElementById('movement-arrival-confidence').value) || 0.85,
     target_window: (document.getElementById('movement-target-window').value || '').trim(),
     auto_focus: document.getElementById('movement-auto-focus')?.checked !== false,
@@ -163,7 +167,7 @@ async function saveMovementSettings() {
 // State
 let _arrImg       = null;   // screenshot Image object
 let _arrScale     = 1;      // canvas-pixel / screen-pixel
-let _arrBox       = null;   // { x, y, size } in SCREEN pixels
+let _arrBox       = null;   // { x, y, w, h } in SCREEN pixels
 let _arrDrag      = null;   // { mode:'move'|'resize', startMx, startMy, startBox }
 let _arrCanvasW   = 0;
 let _arrCanvasH   = 0;
@@ -258,6 +262,20 @@ function arrivalInputChange() {
   arrivalRedraw();
   arrivalUpdateToolbar();
 }
+function arrivalHSliderChange() {
+  const v = document.getElementById('arrival-region-h-slider').value;
+  document.getElementById('movement-arrival-region-h').value = v;
+  _arrBox = _arrBoxFromSettings();
+  arrivalRedraw();
+  arrivalUpdateToolbar();
+}
+function arrivalHInputChange() {
+  const v = document.getElementById('movement-arrival-region-h').value;
+  document.getElementById('arrival-region-h-slider').value = v;
+  _arrBox = _arrBoxFromSettings();
+  arrivalRedraw();
+  arrivalUpdateToolbar();
+}
 function arrivalConfSliderChange() {
   const v = document.getElementById('arrival-conf-slider').value;
   document.getElementById('movement-arrival-confidence').value = parseFloat(v).toFixed(2);
@@ -269,10 +287,11 @@ function arrivalConfInputChange() {
 
 // ── Build box from current settings ──────────────────────────
 function _arrBoxFromSettings() {
-  const px   = parseInt(document.getElementById('movement-player-x').value)  || 960;
-  const py   = parseInt(document.getElementById('movement-player-y').value)  || 540;
-  const size = parseInt(document.getElementById('movement-arrival-region').value) || 200;
-  return { x: px - size / 2, y: py - size / 2, size };
+  const px = parseInt(document.getElementById('movement-player-x').value)      || 960;
+  const py = parseInt(document.getElementById('movement-player-y').value)      || 540;
+  const w  = parseInt(document.getElementById('movement-arrival-region').value) || 200;
+  const h  = parseInt(document.getElementById('movement-arrival-region-h').value) || w;
+  return { x: px - w / 2, y: py - h / 2, w, h };
 }
 
 // ── Load screen ───────────────────────────────────────────────
@@ -324,30 +343,34 @@ function arrivalRedraw() {
 
   if (!_arrBox) return;
 
-  const bx = _arrBox.x * s, by = _arrBox.y * s, bs = _arrBox.size * s;
+  const bx = _arrBox.x * s, by = _arrBox.y * s;
+  const bw = _arrBox.w * s, bh = _arrBox.h * s;
 
   // Dimmed overlay outside the box
   ctx.fillStyle = 'rgba(0,0,0,0.45)';
   ctx.fillRect(0,  0,  canvas.width, by);
-  ctx.fillRect(0,  by, bx, bs);
-  ctx.fillRect(bx + bs, by, canvas.width - bx - bs, bs);
-  ctx.fillRect(0,  by + bs, canvas.width, canvas.height - by - bs);
+  ctx.fillRect(0,  by, bx, bh);
+  ctx.fillRect(bx + bw, by, canvas.width - bx - bw, bh);
+  ctx.fillRect(0,  by + bh, canvas.width, canvas.height - by - bh);
 
   // Box fill
   ctx.fillStyle = 'rgba(52,152,219,0.12)';
-  ctx.fillRect(bx, by, bs, bs);
+  ctx.fillRect(bx, by, bw, bh);
 
   // Box border
   ctx.strokeStyle = '#3498db';
   ctx.lineWidth   = Math.max(1.5, 2 * s);
   ctx.setLineDash([8 * s, 4 * s]);
-  ctx.strokeRect(bx, by, bs, bs);
+  ctx.strokeRect(bx, by, bw, bh);
   ctx.setLineDash([]);
 
   // Corner handles
   const hs = Math.max(6, 9 * s);
   const corners = [
-    [bx, by], [bx + bs, by], [bx, by + bs], [bx + bs, by + bs]
+    [bx,      by     ],
+    [bx + bw, by     ],
+    [bx,      by + bh],
+    [bx + bw, by + bh],
   ];
   corners.forEach(([cx, cy]) => {
     ctx.fillStyle = '#3498db';
@@ -375,10 +398,10 @@ function arrivalRedraw() {
 
   // Box label
   ctx.fillStyle = '#3498db';
-  const lbl = `Arrival region  ${_arrBox.size}×${_arrBox.size}px`;
+  const lbl = `Arrival region  ${_arrBox.w}×${_arrBox.h}px`;
   const tw = ctx.measureText(lbl).width;
   const lx = Math.min(bx + 6, canvas.width - tw - 8);
-  const ly = by > fs + 6 ? by - 6 : by + bs + fs + 4;
+  const ly = by > fs + 6 ? by - 6 : by + bh + fs + 4;
   ctx.fillStyle = 'rgba(0,0,0,0.55)';
   ctx.fillRect(lx - 3, ly - fs, tw + 6, fs + 4);
   ctx.fillStyle = '#3498db';
@@ -395,18 +418,19 @@ function _arrHitTest(mx, my) {
   // Returns 'resize-tl'|'resize-tr'|'resize-bl'|'resize-br'|'move'|null
   if (!_arrBox || !_arrImg) return null;
   const s  = _arrScale;
-  const bx = _arrBox.x * s, by = _arrBox.y * s, bs = _arrBox.size * s;
+  const bx = _arrBox.x * s, by = _arrBox.y * s;
+  const bw = _arrBox.w * s, bh = _arrBox.h * s;
   const hs = Math.max(10, 12 * s);
   const corners = [
     ['resize-tl', bx,      by     ],
-    ['resize-tr', bx + bs, by     ],
-    ['resize-bl', bx,      by + bs],
-    ['resize-br', bx + bs, by + bs],
+    ['resize-tr', bx + bw, by     ],
+    ['resize-bl', bx,      by + bh],
+    ['resize-br', bx + bw, by + bh],
   ];
   for (const [name, cx, cy] of corners) {
     if (Math.abs(mx - cx) <= hs && Math.abs(my - cy) <= hs) return name;
   }
-  if (mx >= bx && mx <= bx + bs && my >= by && my <= by + bs) return 'move';
+  if (mx >= bx && mx <= bx + bw && my >= by && my <= by + bh) return 'move';
   return null;
 }
 
@@ -436,7 +460,8 @@ function arrivalMouseMove(e) {
   if (!_arrDrag) {
     // Cursor hint
     const hit = _arrHitTest(mx, my);
-    canvas.style.cursor = hit === 'move' ? 'grab' : hit ? 'nwse-resize' : 'crosshair';
+    const cursorMap = { 'move': 'grab', 'resize-tl': 'nwse-resize', 'resize-br': 'nwse-resize', 'resize-tr': 'nesw-resize', 'resize-bl': 'nesw-resize' };
+    canvas.style.cursor = hit ? (cursorMap[hit] || 'crosshair') : 'crosshair';
     return;
   }
 
@@ -448,36 +473,41 @@ function arrivalMouseMove(e) {
   const SH  = window.screen.height || 1080;
 
   if (_arrDrag.mode === 'move') {
-    _arrBox.x = Math.max(0, Math.min(SW - sb.size, sb.x + dx));
-    _arrBox.y = Math.max(0, Math.min(SH - sb.size, sb.y + dy));
+    _arrBox.x = Math.max(0, Math.min(SW - sb.w, sb.x + dx));
+    _arrBox.y = Math.max(0, Math.min(SH - sb.h, sb.y + dy));
   } else {
-    // Resize: anchor is the opposite corner
-    let newSize = sb.size;
-    let nx = sb.x, ny = sb.y;
+    // Resize: each corner controls the two edges it touches independently.
+    let nw = sb.w, nh = sb.h, nx = sb.x, ny = sb.y;
 
     if (_arrDrag.mode === 'resize-br') {
-      newSize = Math.max(50, sb.size + Math.max(dx, dy));
+      nw = Math.max(50, sb.w + dx);
+      nh = Math.max(50, sb.h + dy);
     } else if (_arrDrag.mode === 'resize-bl') {
-      newSize = Math.max(50, sb.size - dx);
-      nx = sb.x + sb.size - newSize;
+      nw = Math.max(50, sb.w - dx);
+      nh = Math.max(50, sb.h + dy);
+      nx = sb.x + sb.w - nw;
     } else if (_arrDrag.mode === 'resize-tr') {
-      newSize = Math.max(50, sb.size - dy);
-      ny = sb.y + sb.size - newSize;
+      nw = Math.max(50, sb.w + dx);
+      nh = Math.max(50, sb.h - dy);
+      ny = sb.y + sb.h - nh;
     } else if (_arrDrag.mode === 'resize-tl') {
-      newSize = Math.max(50, sb.size + Math.min(dx, dy) * -1);
-      nx = sb.x + sb.size - newSize;
-      ny = sb.y + sb.size - newSize;
+      nw = Math.max(50, sb.w - dx);
+      nh = Math.max(50, sb.h - dy);
+      nx = sb.x + sb.w - nw;
+      ny = sb.y + sb.h - nh;
     }
 
-    newSize = Math.min(newSize, 800);
-    _arrBox.x    = Math.max(0, nx);
-    _arrBox.y    = Math.max(0, ny);
-    _arrBox.size = Math.round(newSize / 10) * 10; // snap to 10
+    nw = Math.min(Math.round(nw / 10) * 10, 800);
+    nh = Math.min(Math.round(nh / 10) * 10, 800);
+    _arrBox.x = Math.max(0, nx);
+    _arrBox.y = Math.max(0, ny);
+    _arrBox.w = nw;
+    _arrBox.h = nh;
   }
 
   // Keep player centred in box
-  const newPx = Math.round(_arrBox.x + _arrBox.size / 2);
-  const newPy = Math.round(_arrBox.y + _arrBox.size / 2);
+  const newPx = Math.round(_arrBox.x + _arrBox.w / 2);
+  const newPy = Math.round(_arrBox.y + _arrBox.h / 2);
   document.getElementById('movement-player-x').value = newPx;
   document.getElementById('movement-player-y').value = newPy;
 
@@ -495,8 +525,10 @@ function arrivalMouseUp(e) {
 
 function _arrWriteBoxToInputs() {
   if (!_arrBox) return;
-  document.getElementById('movement-arrival-region').value = _arrBox.size;
-  document.getElementById('arrival-region-slider').value   = _arrBox.size;
+  document.getElementById('movement-arrival-region').value   = _arrBox.w;
+  document.getElementById('arrival-region-slider').value     = _arrBox.w;
+  document.getElementById('movement-arrival-region-h').value = _arrBox.h;
+  document.getElementById('arrival-region-h-slider').value   = _arrBox.h;
 }
 
 function arrivalUpdateToolbar() {
@@ -504,7 +536,7 @@ function arrivalUpdateToolbar() {
   if (!el || !_arrBox) return;
   const px = parseInt(document.getElementById('movement-player-x').value) || 960;
   const py = parseInt(document.getElementById('movement-player-y').value) || 540;
-  el.textContent = `Region: ${_arrBox.size}×${_arrBox.size}px  ·  Player: (${px}, ${py})`;
+  el.textContent = `Region: ${_arrBox.w}×${_arrBox.h}px  ·  Player: (${px}, ${py})`;
 }
 
 // Backwards compat stubs (called from old references)

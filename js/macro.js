@@ -114,10 +114,18 @@ async function runScript() {
     if (result && result.status === 'running') {
       // Show the floating indicator bar (hides main window)
       window.pywebview.api.show_indicator().catch(() => {});
+    } else if (result && result.status === 'error') {
+      // API rejected the run — no Python callback will fire, so unlock immediately
+      toast(`Error: ${result.message || 'Could not start script'}`, 'error');
+      setStatus('idle', 'Idle');
+      isRunning = false;
+      _setRunningLockUI(false);
     }
-  } catch(e) { 
-    toast(`Error: ${e}`, 'error'); 
-    setStatus('idle','Idle'); 
+  } catch(e) {
+    toast(`Error: ${e}`, 'error');
+    setStatus('idle', 'Idle');
+    isRunning = false;
+    _setRunningLockUI(false);
   }
 }
 
@@ -493,8 +501,22 @@ async function debugScript() {
     document.getElementById('btn-pause-script').textContent = '⏸ Pause';
     showDebugControls();
     try {
-        await withLoading(window.pywebview.api.start_debug(script, repeatVal));
-    } catch(e) { toast(`Error: ${e}`, 'error'); setStatus('idle','Idle'); }
+        const result = await withLoading(window.pywebview.api.start_debug(script, repeatVal));
+        if (result && result.status === 'error') {
+            // API rejected the debug run — no Python callback will fire, so unlock immediately
+            toast(`Error: ${result.message || 'Could not start debug'}`, 'error');
+            setStatus('idle', 'Idle');
+            isRunning = false;
+            _debugActive = false;
+            _setRunningLockUI(false);
+        }
+    } catch(e) {
+        toast(`Error: ${e}`, 'error');
+        setStatus('idle', 'Idle');
+        isRunning = false;
+        _debugActive = false;
+        _setRunningLockUI(false);
+    }
 }
 
 // ══════════════════════════════════════════════════════════

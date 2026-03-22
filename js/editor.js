@@ -897,28 +897,17 @@ async function _restoreAutosave() {
     const editor = document.getElementById('script-editor');
     if (!editor || editor.value.trim()) return;
 
-    // Show a non-intrusive restore banner
+    // Remove any existing banner
+    document.getElementById('autosave-banner')?.remove();
+
     const banner = document.createElement('div');
     banner.id = 'autosave-banner';
-    banner.style.cssText = `
-      position:fixed;bottom:0;left:0;right:0;z-index:9000;
-      background:var(--color-background-info);
-      border-top:1px solid var(--color-border-info);
-      padding:10px 18px;display:flex;align-items:center;gap:12px;
-      font-size:13px;color:var(--color-text-info);
-      animation:slideUp .3s ease;
-    `;
+    banner.className = 'autosave-banner';
     banner.innerHTML = `
-      <svg style="width:16px;height:16px;flex-shrink:0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+      <svg style="width:16px;height:16px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
       <span>Unsaved script recovered from your last session.</span>
-      <button onclick="_applyAutosave()" style="
-        margin-left:4px;padding:4px 14px;border-radius:6px;border:none;cursor:pointer;
-        background:var(--color-text-info);color:#fff;font-size:12px;font-weight:600;
-      ">Restore</button>
-      <button onclick="document.getElementById('autosave-banner')?.remove()" style="
-        padding:4px 10px;border-radius:6px;border:1px solid var(--color-border-info);
-        cursor:pointer;background:transparent;color:var(--color-text-info);font-size:12px;
-      ">Dismiss</button>
+      <button class="banner-restore" onclick="_applyAutosave()">&#8635; Restore</button>
+      <button class="banner-dismiss" onclick="document.getElementById('autosave-banner')?.remove()">Dismiss</button>
     `;
     document.body.appendChild(banner);
 
@@ -1936,4 +1925,68 @@ async function registerAmytFileAssociation() {
     if (r.status === 'ok') toast('✅ ' + r.message, 'info');
     else toast('⚠ ' + r.message, 'warn');
   } catch(e) { toast(`Error: ${e}`, 'error'); }
+}
+
+// ── APP CLOSE HANDLING ────────────────────────────────────────────────────
+// Called by Python's window.events.closing handler via evaluate_js().
+// Checks if the script is dirty and shows the confirm dialog or closes directly.
+
+function handleAppClose() {
+  const editor   = document.getElementById('script-editor');
+  const hasScript = editor && editor.value.trim().length > 0;
+
+  // No script content — close immediately, no dialog needed
+  if (!hasScript || !_scriptDirty) {
+    window.pywebview?.api?.force_close();
+    return;
+  }
+
+  // Show the unsaved-changes dialog
+  const nameEl = document.getElementById('savload-filename');
+  const name   = nameEl ? nameEl.textContent.trim() : 'script';
+  const label  = document.getElementById('close-confirm-filename');
+  if (label) {
+    label.textContent = name !== 'unsaved'
+      ? `"${name}" has unsaved changes`
+      : 'has unsaved changes';
+  }
+  document.getElementById('close-confirm-overlay')?.classList.remove('hidden');
+}
+
+async function closeConfirmSaveAndClose() {
+  document.getElementById('close-confirm-overlay')?.classList.add('hidden');
+  const editor  = document.getElementById('script-editor');
+  const nameEl  = document.getElementById('savload-filename');
+  const name    = nameEl ? nameEl.textContent.trim() : 'unsaved';
+  const content = editor ? editor.value : '';
+
+  if (!window.pywebview?.api) return;
+
+  // If the file already has a name, quick-save then close
+  if (name && name !== 'unsaved') {
+    await window.pywebview.api.save_and_close(name, content);
+  } else {
+    // No filename yet — open Save As dialog, then close on success
+    try {
+      const r = await window.pywebview.api.save_script_dialog(content);
+      if (r?.status === 'ok') {
+        await window.pywebview.api.force_close();
+      } else {
+        // User cancelled the save dialog — keep app open
+        document.getElementById('close-confirm-overlay')?.classList.remove('hidden');
+      }
+    } catch(e) {
+      await window.pywebview.api.force_close();
+    }
+  }
+}
+
+function closeConfirmDiscard() {
+  document.getElementById('close-confirm-overlay')?.classList.add('hidden');
+  window.pywebview?.api?.confirm_close();
+}
+
+function closeConfirmCancel() {
+  document.getElementById('close-confirm-overlay')?.classList.add('hidden');
+  // Do nothing — user cancelled, app stays open
 }

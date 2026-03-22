@@ -973,10 +973,14 @@ function openImgActionModal(defaultAction) {
   document.getElementById('img-drag-dest-x').value = '0';
   document.getElementById('img-drag-dest-y').value = '0';
   // Arrival fields (NAVIGATE_TO_IMAGE)
-  const arEl = document.getElementById('img-arrival-region');
-  const acEl = document.getElementById('img-arrival-confidence');
-  const mtEl = document.getElementById('img-miss-tolerance');
-  if (arEl) arEl.value = '200';
+  const arEl   = document.getElementById('img-arrival-region');
+  const arhEl  = document.getElementById('img-arrival-region-h');
+  const acEl   = document.getElementById('img-arrival-confidence');
+  const mtEl   = document.getElementById('img-miss-tolerance');
+  if (arEl)  arEl.value  = '200';
+  if (arhEl) arhEl.value = '200';
+  const arhSlider = document.getElementById('img-arrival-region-h-slider');
+  if (arhSlider) arhSlider.value = '200';
   if (acEl) acEl.value = '0.85';
   if (mtEl) mtEl.value = '3';
 
@@ -1082,18 +1086,20 @@ function imgActionPreview() {
         if (parseFloat(conf) !== 0.8) parts.push(`confidence=${conf}`);
         if (ox !== 0) parts.push(`offsetX=${ox}`);
         if (oy !== 0) parts.push(`offsetY=${oy}`);
-        const ar = parseInt(document.getElementById('img-arrival-region')?.value || '200');
-        const ac = parseFloat(document.getElementById('img-arrival-confidence')?.value || '0.85');
-        const mt = parseInt(document.getElementById('img-miss-tolerance')?.value || '3');
-        if (ar !== 200)  parts.push(`arrival_region=${ar}`);
-        if (ac !== 0.85) parts.push(`arrival_confidence=${ac}`);
-        if (mt !== 3)    parts.push(`miss_tolerance=${mt}`);
+        const ar  = parseInt(document.getElementById('img-arrival-region')?.value   || '200');
+        const arh = parseInt(document.getElementById('img-arrival-region-h')?.value || String(ar));
+        const ac  = parseFloat(document.getElementById('img-arrival-confidence')?.value || '0.85');
+        const mt  = parseInt(document.getElementById('img-miss-tolerance')?.value   || '3');
+        if (ar  !== 200)  parts.push(`arrival_region=${ar}`);
+        if (arh !== ar)   parts.push(`arrival_region_h=${arh}`);
+        if (ac  !== 0.85) parts.push(`arrival_confidence=${ac}`);
+        if (mt  !== 3)    parts.push(`miss_tolerance=${mt}`);
         // Update description labels
         const lbl1 = document.getElementById('img-arrival-region-label');
         const lbl2 = document.getElementById('img-arrival-region-label2');
         const lbl3 = document.getElementById('img-arrival-conf-label');
         if (lbl1) lbl1.textContent = ar;
-        if (lbl2) lbl2.textContent = ar;
+        if (lbl2) lbl2.textContent = arh;
         if (lbl3) lbl3.textContent = Math.round(ac * 100) + '%';
         snippet = parts.join(' ');
       } else {
@@ -1208,12 +1214,14 @@ function imgActionConfirm() {
       if (parseFloat(conf) !== 0.8) parts.push(`confidence=${conf}`);
       if (ox !== 0) parts.push(`offsetX=${ox}`);
       if (oy !== 0) parts.push(`offsetY=${oy}`);
-      const ar = parseInt(document.getElementById('img-arrival-region')?.value || '200');
-      const ac = parseFloat(document.getElementById('img-arrival-confidence')?.value || '0.85');
-      const mt = parseInt(document.getElementById('img-miss-tolerance')?.value || '3');
-      if (ar !== 200)  parts.push(`arrival_region=${ar}`);
-      if (ac !== 0.85) parts.push(`arrival_confidence=${ac}`);
-      if (mt !== 3)    parts.push(`miss_tolerance=${mt}`);
+      const ar  = parseInt(document.getElementById('img-arrival-region')?.value   || '200');
+      const arh = parseInt(document.getElementById('img-arrival-region-h')?.value || String(ar));
+      const ac  = parseFloat(document.getElementById('img-arrival-confidence')?.value || '0.85');
+      const mt  = parseInt(document.getElementById('img-miss-tolerance')?.value   || '3');
+      if (ar  !== 200)  parts.push(`arrival_region=${ar}`);
+      if (arh !== ar)   parts.push(`arrival_region_h=${arh}`);
+      if (ac  !== 0.85) parts.push(`arrival_confidence=${ac}`);
+      if (mt  !== 3)    parts.push(`miss_tolerance=${mt}`);
       snippet = parts.join(' ');
     } else {
         snippet = `${act} ${tpl} ${conf}`;

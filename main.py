@@ -1,10 +1,42 @@
 import sys
 import os
 
-ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+# Works both from source and PyInstaller frozen .exe
+if getattr(sys, 'frozen', False):
+    ROOT_DIR = sys._MEIPASS                        # _internal/ — data files
+    WORK_DIR = os.path.dirname(sys.executable)     # folder containing AMYT.exe
+
+    # ── UTF-8 stdout/stderr fix ───────────────────────────────────────────────
+    # Windows defaults stdout/stderr to cp1252 in frozen exes.  Any log message
+    # containing characters outside cp1252 (e.g. → U+2192, × U+00D7) will raise
+    # "charmap codec can't encode character" and crash the app.
+    # Reconfigure both streams to UTF-8 with 'replace' fallback so a single
+    # unencodable character never takes down the whole process.
+    import io
+    for _stream_name in ("stdout", "stderr"):
+        _stream = getattr(sys, _stream_name, None)
+        if _stream is not None:
+            try:
+                setattr(
+                    sys, _stream_name,
+                    io.TextIOWrapper(
+                        _stream.buffer,
+                        encoding="utf-8",
+                        errors="replace",
+                        line_buffering=True,
+                    )
+                )
+            except AttributeError:
+                # Stream has no .buffer (e.g. already a NullWriter) — leave it alone
+                pass
+else:
+    ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+    WORK_DIR = ROOT_DIR
+
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
-os.chdir(ROOT_DIR)
+
+os.chdir(WORK_DIR)   # storage/, logs/ created next to AMYT.exe
 
 import webview
 import threading
@@ -714,6 +746,19 @@ class API:
                     "templates_bundled": bundled}
         except Exception as e:
             return {"status": "error", "message": str(e)}
+
+    def save_script_dialog(self, content: str):
+        """Alias for save_file_dialog — used by the close-confirmation flow."""
+        return self.save_file_dialog(content)
+
+    def save_and_close(self, name: str, script_content: str):
+        """Called by JS: save the named script then shut down cleanly."""
+        try:
+            self.save_script(name, script_content)
+            self.logger.log(f"Saved '{name}' before close")
+        except Exception as e:
+            self.logger.log(f"save_and_close error: {e}", level="ERROR")
+        self._shutdown()
 
     def _extract_template_names(self, script_content: str):
         import re
@@ -1661,11 +1706,15 @@ class API:
         return {"version": APP_VERSION}
 
     def check_for_update(self):
-
+        """
+        Check GitHub Releases for a newer version.
+        Returns { status, current, latest, update_available, release_url, release_notes }
+        TODO: Replace GITHUB_USER and GITHUB_REPO with your actual values.
+        """
         import urllib.request, json
 
-        GITHUB_USER = "kramogs-bug" 
-        GITHUB_REPO = "AMYT-app" 
+        GITHUB_USER = "kramogs-bug"   # TODO: replace
+        GITHUB_REPO = "AMYT-app"          # TODO: replace
 
         try:
             url = (
@@ -1715,6 +1764,51 @@ class API:
         except Exception as e:
             self.logger.log(f"Update check error: {e}", level="WARN")
             return {"status": "error", "message": str(e)}
+
+    def fetch_control_config(self):
+        """
+        Fetch control.json from GitHub raw content.
+        This lets you remotely:
+          - Disable the app for everyone  (app_enabled: false)
+          - Force a minimum version       (min_version: "1.x.x")
+          - Force users to update         (force_update: true)
+          - Broadcast a message           (message: "...")
+        Returns the parsed config dict, or safe defaults if unreachable.
+        """
+        import urllib.request, json
+
+        GITHUB_USER = "kramogs-bug"
+        GITHUB_REPO = "AMYT-app"
+        BRANCH      = "main"
+
+        DEFAULTS = {
+            "app_enabled":   True,
+            "min_version":   "0.0.0",
+            "latest_version": APP_VERSION,
+            "force_update":  False,
+            "message":       "",
+            "download_url":  f"https://github.com/{GITHUB_USER}/{GITHUB_REPO}/releases/latest",
+        }
+
+        try:
+            url = (
+                f"https://raw.githubusercontent.com/"
+                f"{GITHUB_USER}/{GITHUB_REPO}/{BRANCH}/control.json"
+            )
+            req = urllib.request.Request(
+                url, headers={"User-Agent": f"AMYT/{APP_VERSION}"}
+            )
+            with urllib.request.urlopen(req, timeout=5) as r:
+                config = json.loads(r.read())
+
+            # Merge with defaults so missing keys don't cause KeyErrors
+            DEFAULTS.update(config)
+            self.logger.log(f"Control config fetched: {DEFAULTS}")
+            return {"status": "ok", "config": DEFAULTS}
+
+        except Exception as e:
+            self.logger.log(f"Control config fetch failed (using defaults): {e}", level="WARN")
+            return {"status": "offline", "config": DEFAULTS}
 
     def open_url(self, url: str):
         """Open a URL in the user's default browser."""
@@ -1774,6 +1868,7 @@ class API:
             "stop_radius": 20,
             "stuck_threshold": 3,
             "arrival_region": 200,
+            "arrival_region_h": 200,
             "arrival_confidence": 0.85,
             "target_window": "",
             "auto_focus": True,
@@ -1801,10 +1896,413 @@ class API:
         self.logger.log("Movement settings saved")
         return {"status": "ok"}
 
+    def export_amyt(self, name: str, description: str = "",
+                    author: str = "", tags: str = ""):
+        """
+        Bundle the current script + its templates into a .amyt file.
+        Opens a Save dialog so the user chooses where to save it.
+        Returns { status, path, templates_bundled } or { status:'cancelled' }.
+        """
+        import io, json, zipfile, hashlib, datetime
+        from tkinter import filedialog
+
+        script_content = ""
+        try:
+            scripts = self.list_scripts()["scripts"]
+            safe_name = name.strip().replace(" ", "_")
+            if not safe_name.endswith(".txt"):
+                safe_name += ".txt"
+            r = self.load_script(safe_name)
+            if r["status"] == "ok":
+                script_content = r["content"]
+        except Exception:
+            pass
+
+        if not script_content:
+            return {"status": "error", "message": "Script is empty or not found"}
+
+        # Ask user where to save
+        save_path = self._run_tkinter_dialog(
+            lambda root: filedialog.asksaveasfilename(
+                title="Export as .amyt",
+                initialfile=(name or "script") + ".amyt",
+                defaultextension=".amyt",
+                filetypes=[("AMYT Script Package", "*.amyt"), ("All files", "*.*")]
+            )
+        )
+        if not save_path:
+            return {"status": "cancelled"}
+
+        # Collect templates used by the script
+        template_names = self._extract_template_names(script_content)
+        templates_dir  = os.path.join("storage", "templates")
+        templates_bundled = 0
+
+        # Build checksum
+        checksum = hashlib.sha256(script_content.encode()).hexdigest()[:16]
+
+        # Build meta.json
+        meta = {
+            "name":        name or os.path.splitext(os.path.basename(save_path))[0],
+            "author":      author.strip(),
+            "description": description.strip(),
+            "tags":        [t.strip() for t in tags.split(",") if t.strip()],
+            "app_version": APP_VERSION,
+            "created":     datetime.date.today().isoformat(),
+            "checksum":    checksum,
+            "commands_used": list({
+                line.split()[0].upper()
+                for line in script_content.splitlines()
+                if line.strip() and not line.strip().startswith("#")
+                   and line.split()[0].isalpha()
+            }),
+        }
+
+        try:
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr("script.txt",  script_content)
+                zf.writestr("meta.json",   json.dumps(meta, indent=2))
+                # ── IMAGE templates (.png) ────────────────────────────────
+                for tpl_name in template_names:
+                    safe = os.path.basename(tpl_name)
+                    src  = os.path.join(templates_dir, safe)
+                    if os.path.exists(src):
+                        zf.write(src, f"templates/{safe}")
+                        templates_bundled += 1
+                    else:
+                        self.logger.log(f"AMYT export: image template not found: {safe}", level="WARN")
+                # ── META templates (.json — TEXT / COLOR) ─────────────────
+                meta_dir = os.path.join("storage", "templates_meta")
+                if os.path.isdir(meta_dir):
+                    for json_file in os.listdir(meta_dir):
+                        if not json_file.lower().endswith(".json"):
+                            continue
+                        # Only bundle meta templates actually referenced in the script
+                        stem = json_file[:-5]  # strip .json
+                        if stem in template_names or json_file in template_names:
+                            src = os.path.join(meta_dir, json_file)
+                            zf.write(src, f"templates_meta/{json_file}")
+                            templates_bundled += 1
+
+            with open(save_path, "wb") as f:
+                f.write(buf.getvalue())
+
+            self.logger.log(
+                f"Exported .amyt: {save_path} "
+                f"({templates_bundled} templates, checksum={checksum})"
+            )
+            return {
+                "status": "ok",
+                "path": save_path,
+                "templates_bundled": templates_bundled,
+                "meta": meta,
+            }
+        except Exception as e:
+            self.logger.log(f"AMYT export error: {e}", level="ERROR")
+            return {"status": "error", "message": str(e)}
+
+    def import_amyt(self, path: str = None):
+        """
+        Import a .amyt file — extract script + templates, return script content.
+        If path is None, opens a file-picker dialog.
+        Returns { status, script, meta, templates_restored }.
+        """
+        import json, zipfile
+        from tkinter import filedialog
+
+        if not path:
+            path = self._run_tkinter_dialog(
+                lambda root: filedialog.askopenfilename(
+                    title="Import .amyt Script Package",
+                    filetypes=[("AMYT Script Package", "*.amyt"), ("All files", "*.*")]
+                )
+            )
+        if not path:
+            return {"status": "cancelled"}
+
+        if not os.path.exists(path):
+            return {"status": "error", "message": f"File not found: {path}"}
+
+        templates_dir = os.path.join("storage", "templates")
+        os.makedirs(templates_dir, exist_ok=True)
+
+        try:
+            with zipfile.ZipFile(path, "r") as zf:
+                names = zf.namelist()
+
+                # Extract script
+                if "script.txt" not in names:
+                    return {"status": "error", "message": "Invalid .amyt file — missing script.txt"}
+                script_content = zf.read("script.txt").decode("utf-8")
+
+                # Extract meta
+                meta = {}
+                if "meta.json" in names:
+                    try:
+                        meta = json.loads(zf.read("meta.json").decode("utf-8"))
+                    except Exception:
+                        pass
+
+                # Extract templates
+                templates_restored = 0
+                meta_dir = os.path.join("storage", "templates_meta")
+                os.makedirs(meta_dir, exist_ok=True)
+                for name_in_zip in names:
+                    # ── IMAGE templates ───────────────────────────────────
+                    if name_in_zip.startswith("templates/") and name_in_zip != "templates/":
+                        safe = os.path.basename(name_in_zip)
+                        if not safe or ".." in safe:
+                            continue
+                        dest = os.path.join(templates_dir, safe)
+                        with zf.open(name_in_zip) as src_f:
+                            with open(dest, "wb") as dst_f:
+                                dst_f.write(src_f.read())
+                        templates_restored += 1
+                    # ── META templates (TEXT / COLOR) ─────────────────────
+                    elif name_in_zip.startswith("templates_meta/") and name_in_zip != "templates_meta/":
+                        safe = os.path.basename(name_in_zip)
+                        if not safe or ".." in safe or not safe.endswith(".json"):
+                            continue
+                        dest = os.path.join(meta_dir, safe)
+                        with zf.open(name_in_zip) as src_f:
+                            with open(dest, "wb") as dst_f:
+                                dst_f.write(src_f.read())
+                        templates_restored += 1
+
+            # Verify checksum if present
+            import hashlib
+            stored_cs = meta.get("checksum", "")
+            actual_cs = hashlib.sha256(script_content.encode()).hexdigest()[:16]
+            checksum_ok = (not stored_cs) or (stored_cs == actual_cs)
+            if not checksum_ok:
+                self.logger.log("AMYT import: checksum mismatch — file may be modified", level="WARN")
+
+            self.logger.log(
+                f"Imported .amyt: {path} "
+                f"({templates_restored} templates, checksum_ok={checksum_ok})"
+            )
+            return {
+                "status":             "ok",
+                "script":             script_content,
+                "meta":               meta,
+                "templates_restored": templates_restored,
+                "checksum_ok":        checksum_ok,
+                "path":               path,
+            }
+        except zipfile.BadZipFile:
+            return {"status": "error", "message": "Not a valid .amyt file"}
+        except Exception as e:
+            self.logger.log(f"AMYT import error: {e}", level="ERROR")
+            return {"status": "error", "message": str(e)}
+
+    def get_amyt_meta(self, path: str):
+        """Read only the meta.json from a .amyt file (for previewing before import)."""
+        import json, zipfile
+        try:
+            with zipfile.ZipFile(path, "r") as zf:
+                if "meta.json" in zf.namelist():
+                    return {"status": "ok", "meta": json.loads(zf.read("meta.json").decode())}
+            return {"status": "ok", "meta": {}}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    def register_amyt_file_association(self):
+        """
+        Register .amyt file association on Windows so double-clicking opens the app.
+        Must be run once — writes to HKEY_CURRENT_USER (no admin needed).
+        """
+        try:
+            import winreg, sys
+            exe = sys.executable
+            # When frozen as a PyInstaller .exe, sys.executable IS the .exe and
+            # __file__ resolves into the temp _MEIPASS directory — unusable as a
+            # registry launch command.  In source mode we still want the two-arg
+            # form so the script can be found.
+            if getattr(sys, 'frozen', False):
+                cmd = f'"{exe}" "%1"'
+                # Icon source: the frozen .exe itself contains logo.ico embedded
+                icon_path = exe
+            else:
+                script = os.path.abspath(__file__)
+                cmd = f'"{exe}" "{script}" "%1"'
+                # Icon source: logo.ico sitting next to main.py
+                icon_path = os.path.join(os.path.dirname(script), "logo.ico")
+                # Fall back to .py file if ico missing
+                if not os.path.exists(icon_path):
+                    icon_path = exe
+
+            # .amyt → AMYTFile
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER,
+                                   r"Software\Classes\.amyt") as k:
+                winreg.SetValueEx(k, "", 0, winreg.REG_SZ, "AMYTFile")
+
+            # AMYTFile description
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER,
+                                   r"Software\Classes\AMYTFile") as k:
+                winreg.SetValueEx(k, "", 0, winreg.REG_SZ, "AMYT Script Package")
+
+            # DefaultIcon — makes Windows Explorer show the app icon on .amyt files
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER,
+                                   r"Software\Classes\AMYTFile\DefaultIcon") as k:
+                # ",0" means "first icon resource in this file"
+                winreg.SetValueEx(k, "", 0, winreg.REG_SZ, f'"{icon_path}",0')
+
+            # Open command
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER,
+                                   r"Software\Classes\AMYTFile\shell\open\command") as k:
+                winreg.SetValueEx(k, "", 0, winreg.REG_SZ, cmd)
+
+            # Notify Windows Shell to refresh icon cache immediately
+            try:
+                import ctypes
+                SHCNE_ASSOCCHANGED = 0x08000000
+                SHCNF_IDLIST       = 0x0000
+                ctypes.windll.shell32.SHChangeNotify(
+                    SHCNE_ASSOCCHANGED, SHCNF_IDLIST, None, None
+                )
+            except Exception:
+                pass  # non-critical — icons update on next Explorer refresh
+
+            self.logger.log("AMYT file association registered (with icon)")
+            return {"status": "ok", "message": ".amyt files will now open with this app"}
+        except Exception as e:
+            self.logger.log(f"File association error: {e}", level="ERROR")
+            return {"status": "error", "message": str(e)}
+
+
+    # ── CLEAN SHUTDOWN ────────────────────────────────────────
+    def _shutdown(self):
+        """
+        Tear down all background threads and hard-exit.
+        os._exit(0) is intentional — the keyboard hook thread and webview GUI
+        thread are non-daemon and would keep the process alive in Task Manager
+        if we used sys.exit() or just let Python unwind normally.
+        """
+        # Guard against being called twice (on_main_closing thread + finally block).
+        # Without this, the second call races into _kb.unhook_all() while the first
+        # is still unwinding, causing a hang before os._exit() is reached.
+        if getattr(self, '_shutdown_called', False):
+            return
+        self._shutdown_called = True
+
+        try:
+            self.macro_engine.stop()
+        except Exception:
+            pass
+        try:
+            import keyboard as _kb
+            _kb.unhook_all()       # kill the keyboard hook thread
+        except Exception:
+            pass
+        try:
+            if getattr(self, '_coord_mouse_listener', None):
+                self._coord_mouse_listener.stop()
+                self._coord_mouse_listener = None
+        except Exception:
+            pass
+        try:
+            self.learner.flush()   # persist learning data
+        except Exception:
+            pass
+        try:
+            # pywebview windows use .hide(), NOT .destroy() — calling .destroy()
+            # on a live webview window blocks indefinitely and causes "not responding".
+            if getattr(self, '_toast_window', None):
+                self._toast_window.hide()
+        except Exception:
+            pass
+        try:
+            if getattr(self, '_indicator_window', None):
+                self._indicator_window.hide()
+        except Exception:
+            pass
+        self.logger.log("Shutdown complete")
+        import os as _os
+        _os._exit(0)
+
+    def confirm_close(self):
+        """JS calls this when user confirms 'close without saving'."""
+        self._shutdown()
+
+    def force_close(self):
+        """JS calls this when script is clean — no dialog needed."""
+        self._shutdown()
+
+
 
 # ══════════════════════════════════════════════════════════════
 #  STARTUP
 # ══════════════════════════════════════════════════════════════
+
+def _check_webview2():
+    """
+    Check WebView2 Runtime is installed.
+    Strategy:
+      1. Registry scan (fast, covers most installs).
+      2. Runtime probe — try loading WebView2Loader.dll directly.
+         Catches installs that use non-standard registry paths (Win11 built-in
+         Edge, corporate managed environments, per-user installs, etc.).
+    Only shows the 'missing' dialog when BOTH checks fail.
+    """
+    import platform
+    if platform.system() != "Windows":
+        return True
+
+    # ── 1. Registry scan ─────────────────────────────────────────────────────
+    import winreg
+    keys_to_check = [
+        # Machine-wide Evergreen
+        r"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
+        r"SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
+        # Per-user Evergreen
+        r"SOFTWARE\Microsoft\EdgeUpdate\Clients\{2CD8A007-E189-409D-A2C8-9AF4EF3C72AA}",
+        # Edge stable (ships WebView2 on Win11)
+        r"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{56EB18F8-B008-4CBD-B6D2-8C97FE7E9062}",
+        r"SOFTWARE\Microsoft\EdgeUpdate\Clients\{56EB18F8-B008-4CBD-B6D2-8C97FE7E9062}",
+    ]
+    for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+        for key_path in keys_to_check:
+            try:
+                with winreg.OpenKey(hive, key_path) as k:
+                    val, _ = winreg.QueryValueEx(k, "pv")
+                    if val and val != "0.0.0.0":
+                        return True
+            except (FileNotFoundError, OSError):
+                continue
+
+    # ── 2. Runtime probe ─────────────────────────────────────────────────────
+    # Win11 often ships WebView2 as part of Edge without writing the Evergreen
+    # registry key above.  Trying to load the DLL is the definitive test.
+    try:
+        import ctypes as _ct2
+        _dll = _ct2.windll.LoadLibrary("WebView2Loader.dll")
+        if _dll:
+            return True
+    except (OSError, AttributeError):
+        pass
+
+    # ── 3. Both failed → friendly install dialog ─────────────────────────────
+    try:
+        import ctypes
+        DOWNLOAD_URL = "https://developer.microsoft.com/en-us/microsoft-edge/webview2/#download-section"
+        msg = (
+            "AMYT requires Microsoft WebView2 Runtime to display its interface.\n\n"
+            "WebView2 is free and takes less than a minute to install.\n\n"
+            "Click OK to open the download page in your browser,\n"
+            "then install 'Evergreen Standalone Installer (x64)' and restart AMYT."
+        )
+        result = ctypes.windll.user32.MessageBoxW(
+            0, msg, "WebView2 Runtime Required — AMYT",
+            0x00000001 | 0x00000030
+        )
+        if result == 1:
+            import webbrowser
+            webbrowser.open(DOWNLOAD_URL)
+    except Exception:
+        pass
+    return False
+
 
 def ensure_directories():
     folders = ["storage", "storage/templates", "logs"]
@@ -1819,13 +2317,24 @@ def ensure_directories():
 
 
 def main(startup_amyt: str = None):
+    # Check WebView2 is installed — show friendly dialog if missing
+    if not _check_webview2():
+        return
+
+    # Force WebView2 renderer — prevents silent fallback to system browser
+    try:
+        webview.guilib = 'edgechromium'
+    except Exception:
+        pass
+
     ensure_directories()
     os.makedirs("storage/scripts", exist_ok=True)
     api     = API()
     ui_path = os.path.join(ROOT_DIR, "index.html")
+    ui_url  = "file:///" + ui_path.replace(os.sep, "/")
     window  = webview.create_window(
         title="Macro Automation App",
-        url=ui_path,
+        url=ui_url,
         js_api=api,
         width=1280,
         height=800,
@@ -1908,7 +2417,57 @@ def main(startup_amyt: str = None):
 
     def on_loaded():
         api._register_hotkeys()
-        # Option 2: auto-import .amyt if launched by double-click
+
+        # ── Remote control check on every launch ──────────────
+        def _control_check():
+            import time as _t, json as _json
+            _t.sleep(1)   # let the UI fully render first
+            try:
+                result = api.fetch_control_config()
+                cfg    = result.get("config", {})
+
+                # 1. App killed remotely
+                if not cfg.get("app_enabled", True):
+                    msg = cfg.get("message") or "This app has been disabled by the developer."
+                    api._window.evaluate_js(
+                        f"window._amytRemoteDisabled && window._amytRemoteDisabled({_json.dumps(msg)})"
+                    )
+                    return
+
+                # 2. Broadcast message (maintenance notice, news, etc.)
+                msg = cfg.get("message", "").strip()
+                if msg:
+                    api._window.evaluate_js(
+                        f"window._amytRemoteMessage && window._amytRemoteMessage({_json.dumps(msg)})"
+                    )
+
+                # 3. Force update — block app until user updates
+                def _ver(v):
+                    try: return tuple(int(x) for x in str(v).split("."))
+                    except: return (0,)
+
+                min_ver     = cfg.get("min_version", "0.0.0")
+                force_upd   = cfg.get("force_update", False)
+                dl_url      = cfg.get("download_url", "")
+
+                if force_upd or _ver(APP_VERSION) < _ver(min_ver):
+                    payload = _json.dumps({
+                        "current":      APP_VERSION,
+                        "min_version":  min_ver,
+                        "download_url": dl_url,
+                        "forced":       True,
+                    })
+                    api._window.evaluate_js(
+                        f"window._amytForceUpdate && window._amytForceUpdate({payload})"
+                    )
+
+            except Exception as e:
+                api.logger.log(f"Control check error: {e}", level="WARN")
+
+        import threading as _th
+        _th.Thread(target=_control_check, daemon=True).start()
+
+        # ── Auto-import .amyt if launched by double-click ──────
         if startup_amyt:
             def _do_import():
                 import time as _t
@@ -1923,252 +2482,57 @@ def main(startup_amyt: str = None):
                         )
                 except Exception as e:
                     api.logger.log(f"Startup .amyt import error: {e}", level="ERROR")
-            import threading as _th
             _th.Thread(target=_do_import, daemon=True).start()
-    window.events.loaded += on_loaded
+    # ── Main window close: intercept X button ─────────────────
+    def on_main_closing():
+        """
+        Returning False cancels the native close.
+        We ask JS to check dirty state and show confirm dialog if needed.
+        JS will call api.confirm_close() or api.force_close() to finish.
+
+        CRITICAL: evaluate_js() must NEVER be called directly inside the
+        closing event handler. The closing event fires on the webview GUI
+        thread — calling evaluate_js() on that same thread deadlocks the
+        app (it waits for JS to run, but JS can't run because the GUI thread
+        is blocked here). Fix: dispatch to a daemon thread so this handler
+        returns immediately, then JS fires 50 ms later on the free GUI thread.
+        """
+        import threading as _th
+        def _fire():
+            import time as _t
+            _t.sleep(0.05)   # yield so the closing handler returns first
+            try:
+                window.evaluate_js("handleAppClose()")
+            except Exception:
+                # JS not ready or window already gone — shut down directly
+                api._shutdown()
+        _th.Thread(target=_fire, daemon=True).start()
+        return False   # always cancel the native close; JS drives it
+
+    window.events.closing += on_main_closing
+    window.events.loaded  += on_loaded
 
     try:
         webview.start(debug=False)
     except KeyboardInterrupt:
         pass
     finally:
-        try:
-            api.learner.flush()
-        except Exception:
-            pass
-        import os as _os
-        _os._exit(0)
+        # Safety net: if webview exits without going through on_main_closing
+        # (e.g. killed externally) still clean up properly.
+        api._shutdown()
 
 
 if __name__ == "__main__":
+    # Required by PyInstaller: must be the very first call in __main__ when the
+    # app is frozen as a .exe.  Without this, any library that uses
+    # multiprocessing internally (e.g. certain cv2/numpy builds) will cause the
+    # frozen exe to spawn infinite child processes and immediately crash.
+    import multiprocessing
+    multiprocessing.freeze_support()
+
     # Option 2: if launched with a .amyt file argument (double-click), auto-import it
     import sys as _sys
     _startup_amyt = None
     if len(_sys.argv) > 1 and _sys.argv[1].lower().endswith(".amyt"):
         _startup_amyt = _sys.argv[1]
     main(_startup_amyt)
-    # ── .AMYT FILE FORMAT ─────────────────────────────────────
-    # .amyt = ZIP containing:
-    #   script.txt      — the macro script
-    #   meta.json       — name, author, description, tags, version, checksum
-    #   templates/      — all template images used by the script
-    #   preview.jpg     — optional screenshot preview
-
-    def export_amyt(self, name: str, description: str = "",
-                    author: str = "", tags: str = ""):
-        """
-        Bundle the current script + its templates into a .amyt file.
-        Opens a Save dialog so the user chooses where to save it.
-        Returns { status, path, templates_bundled } or { status:'cancelled' }.
-        """
-        import io, json, zipfile, hashlib, datetime
-        from tkinter import filedialog
-
-        script_content = ""
-        try:
-            scripts = self.list_scripts()["scripts"]
-            safe_name = name.strip().replace(" ", "_")
-            if not safe_name.endswith(".txt"):
-                safe_name += ".txt"
-            r = self.load_script(safe_name)
-            if r["status"] == "ok":
-                script_content = r["content"]
-        except Exception:
-            pass
-
-        if not script_content:
-            return {"status": "error", "message": "Script is empty or not found"}
-
-        # Ask user where to save
-        save_path = self._run_tkinter_dialog(
-            lambda root: filedialog.asksaveasfilename(
-                title="Export as .amyt",
-                initialfile=(name or "script") + ".amyt",
-                defaultextension=".amyt",
-                filetypes=[("AMYT Script Package", "*.amyt"), ("All files", "*.*")]
-            )
-        )
-        if not save_path:
-            return {"status": "cancelled"}
-
-        # Collect templates used by the script
-        template_names = self._extract_template_names(script_content)
-        templates_dir  = os.path.join("storage", "templates")
-        templates_bundled = 0
-
-        # Build checksum
-        checksum = hashlib.sha256(script_content.encode()).hexdigest()[:16]
-
-        # Build meta.json
-        meta = {
-            "name":        name or os.path.splitext(os.path.basename(save_path))[0],
-            "author":      author.strip(),
-            "description": description.strip(),
-            "tags":        [t.strip() for t in tags.split(",") if t.strip()],
-            "app_version": APP_VERSION,
-            "created":     datetime.date.today().isoformat(),
-            "checksum":    checksum,
-            "commands_used": list({
-                line.split()[0].upper()
-                for line in script_content.splitlines()
-                if line.strip() and not line.strip().startswith("#")
-                   and line.split()[0].isalpha()
-            }),
-        }
-
-        try:
-            buf = io.BytesIO()
-            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-                zf.writestr("script.txt",  script_content)
-                zf.writestr("meta.json",   json.dumps(meta, indent=2))
-                for tpl_name in template_names:
-                    safe = os.path.basename(tpl_name)
-                    src  = os.path.join(templates_dir, safe)
-                    if os.path.exists(src):
-                        zf.write(src, f"templates/{safe}")
-                        templates_bundled += 1
-                    else:
-                        self.logger.log(f"AMYT export: template not found: {safe}", level="WARN")
-
-            with open(save_path, "wb") as f:
-                f.write(buf.getvalue())
-
-            self.logger.log(
-                f"Exported .amyt: {save_path} "
-                f"({templates_bundled} templates, checksum={checksum})"
-            )
-            return {
-                "status": "ok",
-                "path": save_path,
-                "templates_bundled": templates_bundled,
-                "meta": meta,
-            }
-        except Exception as e:
-            self.logger.log(f"AMYT export error: {e}", level="ERROR")
-            return {"status": "error", "message": str(e)}
-
-    def import_amyt(self, path: str = None):
-        """
-        Import a .amyt file — extract script + templates, return script content.
-        If path is None, opens a file-picker dialog.
-        Returns { status, script, meta, templates_restored }.
-        """
-        import json, zipfile
-        from tkinter import filedialog
-
-        if not path:
-            path = self._run_tkinter_dialog(
-                lambda root: filedialog.askopenfilename(
-                    title="Import .amyt Script Package",
-                    filetypes=[("AMYT Script Package", "*.amyt"), ("All files", "*.*")]
-                )
-            )
-        if not path:
-            return {"status": "cancelled"}
-
-        if not os.path.exists(path):
-            return {"status": "error", "message": f"File not found: {path}"}
-
-        templates_dir = os.path.join("storage", "templates")
-        os.makedirs(templates_dir, exist_ok=True)
-
-        try:
-            with zipfile.ZipFile(path, "r") as zf:
-                names = zf.namelist()
-
-                # Extract script
-                if "script.txt" not in names:
-                    return {"status": "error", "message": "Invalid .amyt file — missing script.txt"}
-                script_content = zf.read("script.txt").decode("utf-8")
-
-                # Extract meta
-                meta = {}
-                if "meta.json" in names:
-                    try:
-                        meta = json.loads(zf.read("meta.json").decode("utf-8"))
-                    except Exception:
-                        pass
-
-                # Extract templates
-                templates_restored = 0
-                for name_in_zip in names:
-                    if name_in_zip.startswith("templates/") and name_in_zip != "templates/":
-                        safe = os.path.basename(name_in_zip)
-                        if not safe or ".." in safe:
-                            continue
-                        dest = os.path.join(templates_dir, safe)
-                        with zf.open(name_in_zip) as src_f:
-                            with open(dest, "wb") as dst_f:
-                                dst_f.write(src_f.read())
-                        templates_restored += 1
-
-            # Verify checksum if present
-            import hashlib
-            stored_cs = meta.get("checksum", "")
-            actual_cs = hashlib.sha256(script_content.encode()).hexdigest()[:16]
-            checksum_ok = (not stored_cs) or (stored_cs == actual_cs)
-            if not checksum_ok:
-                self.logger.log("AMYT import: checksum mismatch — file may be modified", level="WARN")
-
-            self.logger.log(
-                f"Imported .amyt: {path} "
-                f"({templates_restored} templates, checksum_ok={checksum_ok})"
-            )
-            return {
-                "status":             "ok",
-                "script":             script_content,
-                "meta":               meta,
-                "templates_restored": templates_restored,
-                "checksum_ok":        checksum_ok,
-                "path":               path,
-            }
-        except zipfile.BadZipFile:
-            return {"status": "error", "message": "Not a valid .amyt file"}
-        except Exception as e:
-            self.logger.log(f"AMYT import error: {e}", level="ERROR")
-            return {"status": "error", "message": str(e)}
-
-    def get_amyt_meta(self, path: str):
-        """Read only the meta.json from a .amyt file (for previewing before import)."""
-        import json, zipfile
-        try:
-            with zipfile.ZipFile(path, "r") as zf:
-                if "meta.json" in zf.namelist():
-                    return {"status": "ok", "meta": json.loads(zf.read("meta.json").decode())}
-            return {"status": "ok", "meta": {}}
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
-
-    def register_amyt_file_association(self):
-        """
-        Register .amyt file association on Windows so double-clicking opens the app.
-        Must be run once — writes to HKEY_CURRENT_USER (no admin needed).
-        """
-        try:
-            import winreg, sys
-            exe = sys.executable
-            script = os.path.abspath(__file__)
-            cmd = f'"{exe}" "{script}" "%1"'
-
-            # .amyt → AMYTFile
-            with winreg.CreateKey(winreg.HKEY_CURRENT_USER,
-                                   r"Software\Classes\.amyt") as k:
-                winreg.SetValueEx(k, "", 0, winreg.REG_SZ, "AMYTFile")
-
-            # AMYTFile description
-            with winreg.CreateKey(winreg.HKEY_CURRENT_USER,
-                                   r"Software\Classes\AMYTFile") as k:
-                winreg.SetValueEx(k, "", 0, winreg.REG_SZ, "AMYT Script Package")
-
-            # Open command
-            with winreg.CreateKey(winreg.HKEY_CURRENT_USER,
-                                   r"Software\Classes\AMYTFile\shell\open\command") as k:
-                winreg.SetValueEx(k, "", 0, winreg.REG_SZ, cmd)
-
-            self.logger.log("AMYT file association registered")
-            return {"status": "ok", "message": ".amyt files will now open with this app"}
-        except Exception as e:
-            self.logger.log(f"File association error: {e}", level="ERROR")
-            return {"status": "error", "message": str(e)}
-
-# ── PLACEHOLDER MARKER FOR AMYT ──

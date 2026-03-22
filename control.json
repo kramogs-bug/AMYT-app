@@ -1,8 +1,8 @@
 {
-  "app_enabled": true,
+  "app_enabled": false,
   "min_version": "1.0.0",
   "latest_version": "1.0.0",
   "force_update": false,
-  "message": "Hello! This is a test broadcast message.",
+  "message": "App is temporarily down for maintenance.",
   "download_url": "https://github.com/kramogs-bug/AMYT-app/releases/latest"
 }

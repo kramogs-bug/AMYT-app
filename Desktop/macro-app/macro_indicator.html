@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8"/>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100%; height: 100%;
+      background: transparent;
+      overflow: hidden;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      -webkit-user-select: none; user-select: none;
+    }
+
+    /* ── Main bar — matches sidebar/toast dark purple palette ── */
+    .indicator {
+      position: fixed; inset: 0;
+      display: flex; align-items: center;
+      gap: 10px;
+      padding: 0 12px 0 14px;
+      background: linear-gradient(135deg, #1e1650, #130e38);
+      border: 2px solid #85C79A;
+      border-radius: 14px;
+      box-shadow: 0 8px 28px rgba(0,0,0,0.55),
+                  0 0 0 1px rgba(133,199,154,0.12),
+                  inset 0 1px 0 rgba(237,247,189,0.06);
+    }
+
+    /* Paused state — border turns amber like .dot.paused */
+    .indicator.paused { border-color: #f0b429; }
+
+    /* ── Drag region covers the whole bar ── */
+    .drag-handle {
+      position: absolute;
+      inset: 0;
+      border-radius: 12px;
+      -webkit-app-region: drag;
+    }
+    /* Buttons + dot sit above drag region */
+    .btns, .dot-wrap, .label { position: relative; z-index: 1; }
+    .btns { -webkit-app-region: no-drag; }
+
+    /* ── Pulsing status dot — matches .dot.running in style.css ── */
+    .dot-wrap { display: flex; align-items: center; flex-shrink: 0; }
+    .dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: #85C79A;
+      animation: dot-pulse 0.5s ease-in-out infinite;
+    }
+    .paused .dot {
+      background: #f0b429;
+      animation: none;
+    }
+    @keyframes dot-pulse {
+      0%, 100% { opacity:1; transform:scale(1);    box-shadow:0 0 0 0   rgba(133,199,154,0.55); }
+      50%       { opacity:.75; transform:scale(1.2); box-shadow:0 0 0 4px rgba(133,199,154,0);   }
+    }
+
+    /* ── Labels ── */
+    .label { flex:1; min-width:0; }
+    .label-main {
+      font-size: 12px; font-weight: 800;
+      color: #EDF7BD;
+      letter-spacing: 0.03em;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      display: block;
+    }
+    .label-sub {
+      font-size: 10px; font-weight: 600;
+      color: #85C79A;
+      display: block; margin-top: 1px;
+      letter-spacing: 0.02em; opacity: 0.85;
+    }
+
+    /* ── Buttons ── */
+    .btns { display: flex; gap: 5px; flex-shrink: 0; }
+    .btn {
+      width: 28px; height: 28px;
+      border: none; border-radius: 7px;
+      cursor: pointer; font-size: 13px; font-family: inherit;
+      display: flex; align-items: center; justify-content: center;
+      transition: background 0.15s, transform 0.1s;
+      flex-shrink: 0;
+    }
+    .btn:active { transform: scale(0.88); }
+
+    /* Pause — teal: matches app .btn-pause background #4E8D9C */
+    .btn-pause { background: rgba(78,141,156,0.22); color: #4E8D9C; border: 1.5px solid rgba(78,141,156,0.35); }
+    .btn-pause:hover { background: rgba(78,141,156,0.45); color: #EDF7BD; }
+
+    /* Stop — danger red: matches app .btn-danger / e94560 */
+    .btn-stop  { background: rgba(233,69,96,0.18);  color: #e94560;  border: 1.5px solid rgba(233,69,96,0.3); }
+    .btn-stop:hover  { background: rgba(233,69,96,0.38);  color: #fff; }
+
+    /* Close — green: matches .btn-secondary border:#85C79A */
+    .btn-close { background: rgba(133,199,154,0.12); color: #85C79A;  border: 1.5px solid rgba(133,199,154,0.28); }
+    .btn-close:hover { background: rgba(133,199,154,0.30); color: #EDF7BD; }
+
+    /* Divider between Stop and Close */
+    .btn-divider { width:1px; height:18px; background:rgba(133,199,154,0.2); flex-shrink:0; align-self:center; }
+  </style>
+</head>
+<body>
+  <div class="indicator" id="bar">
+    <div class="drag-handle"></div>
+    <div class="dot-wrap"><div class="dot" id="dot"></div></div>
+    <div class="label">
+      <span class="label-main" id="status-text">Playing macro…</span>
+      <span class="label-sub"  id="sub-text">Script running</span>
+    </div>
+    <div class="btns">
+      <button class="btn btn-pause" id="btn-pause" onclick="onPause()" title="Pause / Resume">⏸</button>
+      <button class="btn btn-stop"  id="btn-stop"  onclick="onStop()"  title="Stop macro">⏹</button>
+      <div class="btn-divider"></div>
+      <button class="btn btn-close" id="btn-close" onclick="onClose()" title="Show main window">✕</button>
+    </div>
+  </div>
+
+  <script>
+    let _paused = false;
+
+    function setPaused(paused) {
+      _paused = paused;
+      const bar = document.getElementById('bar');
+      const btn = document.getElementById('btn-pause');
+      const txt = document.getElementById('status-text');
+      const sub = document.getElementById('sub-text');
+      if (paused) {
+        bar.classList.add('paused');
+        btn.textContent = '▶'; btn.title = 'Resume';
+        txt.textContent = 'Macro paused';
+        sub.textContent = 'Click ▶ to resume';
+      } else {
+        bar.classList.remove('paused');
+        btn.textContent = '⏸'; btn.title = 'Pause';
+        txt.textContent = 'Playing macro…';
+        sub.textContent = 'Script running';
+      }
+    }
+
+    async function onPause() {
+      if (!window.pywebview?.api) return;
+      try {
+        if (_paused) { await window.pywebview.api.resume_script(); setPaused(false); }
+        else         { await window.pywebview.api.pause_script();  setPaused(true);  }
+      } catch(e) { console.error(e); }
+    }
+
+    async function onStop() {
+      if (!window.pywebview?.api) return;
+      try { await window.pywebview.api.indicator_stop(); } catch(e) { console.error(e); }
+    }
+
+    async function onClose() {
+      if (!window.pywebview?.api) return;
+      _paused = false; setPaused(false);
+      try { await window.pywebview.api.indicator_close(); } catch(e) { console.error(e); }
+    }
+  </script>
+</body>
+</html>

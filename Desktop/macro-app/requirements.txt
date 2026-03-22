@@ -1,0 +1,22 @@
+# Core UI
+pywebview>=4.0
+
+# Mouse & keyboard automation
+pyautogui
+pydirectinput
+pynput
+keyboard
+
+# Screen capture & image detection
+opencv-python
+mss
+Pillow
+numpy
+
+# Window management & auto-focus (Windows)
+pywin32
+pygetwindow
+
+# OCR (optional — needed for TEXT_ commands)
+# Install separately: pip install easyocr
+# or: pip install pytesseract  (also needs Tesseract binary from https://github.com/UB-Mannheim/tesseract/wiki)

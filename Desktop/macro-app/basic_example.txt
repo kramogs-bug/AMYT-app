@@ -1,0 +1,84 @@
+# ─────────────────────────────────────────────
+# EXAMPLE 1 — Basic click and type
+# ─────────────────────────────────────────────
+WAIT 2
+CLICK 500 300
+TYPE Hello World
+PRESS enter
+
+
+# ─────────────────────────────────────────────
+# EXAMPLE 2 — Image detection
+# ─────────────────────────────────────────────
+WAIT_IMAGE start_button 15
+CLICK_IMAGE start_button
+
+
+# ─────────────────────────────────────────────
+# EXAMPLE 3 — IF / ELSE conditional
+# ─────────────────────────────────────────────
+IF_IMAGE enemy.png
+  PRESS space
+  WAIT 0.5
+ELSE
+  MOVE 400 300
+  WAIT 2
+END
+
+
+# ─────────────────────────────────────────────
+# EXAMPLE 4 — REPEAT loop
+# ─────────────────────────────────────────────
+REPEAT 10
+  CLICK 300 400
+  WAIT 0.3
+END
+
+
+# ─────────────────────────────────────────────
+# EXAMPLE 5 — WHILE image is on screen
+# ─────────────────────────────────────────────
+WHILE_IMAGE loading_bar
+  WAIT 1
+END
+CLICK_IMAGE start_button
+
+
+# ─────────────────────────────────────────────
+# EXAMPLE 6 — Keyboard shortcuts
+# ─────────────────────────────────────────────
+HOTKEY ctrl+a
+HOTKEY ctrl+c
+WAIT 0.5
+HOTKEY ctrl+v
+
+
+# ─────────────────────────────────────────────
+# EXAMPLE 7 — Drag and scroll
+# ─────────────────────────────────────────────
+DRAG 100 200 600 200
+SCROLL -5
+WAIT 1
+
+
+# ─────────────────────────────────────────────
+# EXAMPLE 8 — Full automation sequence
+# ─────────────────────────────────────────────
+# Wait for the app to open
+WAIT_IMAGE app_logo.png 30
+
+# Click start
+CLICK_IMAGE start_button
+
+# Wait for loading to finish
+WAIT_IMAGE_GONE loading_screen 60
+
+# Infinite game loop
+LOOP
+  IF_IMAGE enemy.png
+    PRESS space
+    WAIT 0.2
+  ELSE
+    WAIT 0.5
+  END
+END

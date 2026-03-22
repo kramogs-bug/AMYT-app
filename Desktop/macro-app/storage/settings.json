@@ -1,0 +1,7 @@
+{
+  "shortcut_play": "ctrl+r",
+  "shortcut_stop": "ctrl+q",
+  "shortcut_pause": "ctrl+p",
+  "auto_learning_enabled": false,
+  "log_cooldown": 10
+}

@@ -28,3 +28,5 @@ MicrosoftEdgeWebview2Setup.exe
 .DS_Store
 Thumbs.db
 desktop.iniinstaller_output/
+MicrosoftEdgeWebview2Setup.exe
+VC_redist.x64.exe

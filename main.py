@@ -41,7 +41,7 @@ os.chdir(WORK_DIR)   # storage/, logs/ created next to AMYT.exe
 import webview
 import threading
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.1"
 
 from macro_engine     import MacroEngine
 from action_engine    import ActionEngine

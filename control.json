@@ -2,7 +2,7 @@
   "app_enabled": true,
   "min_version": "1.0.0",
   "latest_version": "1.0.1",
-  "force_update": true,
-  "message": "1.0.1 is out fixed some bugs",
+  "force_update": false,
+  "message": "Welcome to version 1.0.1 (Beta). This app is still in active testing, and you may encounter bugs. If you find any issues or have feature requests, please contact the creator via the link at the bottom of the page.",
   "download_url": "https://github.com/kramogs-bug/AMYT-app/releases/latest"
 }

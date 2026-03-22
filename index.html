@@ -3690,15 +3690,23 @@ window._amytRemoteMessage = function(msg) {
 
 // Called when developer sets force_update: true or min_version is higher than current
 window._amytForceUpdate = function(data) {
-  document.body.style.filter = 'blur(4px)';
-  document.body.style.pointerEvents = 'none';
+  // Blur backdrop as a separate non-interactive layer so overlay stays clickable
+  const backdrop = document.createElement('div');
+  backdrop.style.cssText = [
+    'position:fixed','inset:0','z-index:99998',
+    'backdrop-filter:blur(5px)','-webkit-backdrop-filter:blur(5px)',
+    'background:rgba(0,0,0,0.6)',
+    'pointer-events:none'
+  ].join(';');
+  document.body.appendChild(backdrop);
+
   const el = document.createElement('div');
   el.style.cssText = [
     'position:fixed','inset:0','z-index:99999',
-    'background:rgba(0,0,0,0.88)',
     'display:flex','flex-direction:column',
     'align-items:center','justify-content:center',
-    'color:#fff','font-family:Segoe UI,sans-serif','text-align:center','padding:40px'
+    'color:#fff','font-family:Segoe UI,sans-serif','text-align:center','padding:40px',
+    'pointer-events:auto'
   ].join(';');
   el.innerHTML = `
     <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="#f39c12" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom:20px">
@@ -3711,8 +3719,9 @@ window._amytForceUpdate = function(data) {
       Version <strong>${data.min_version}</strong> or higher is required to continue.
     </div>
     <button onclick="window.pywebview.api.open_url('${data.download_url}')"
-      style="background:#f39c12;color:#000;border:none;padding:12px 32px;border-radius:8px;font-size:15px;font-weight:700;cursor:pointer">
-      Download Update
+      style="background:#f39c12;color:#000;border:none;padding:12px 32px;border-radius:8px;font-size:15px;font-weight:700;cursor:pointer;pointer-events:auto"
+      onmouseover="this.style.background='#d4870e'" onmouseout="this.style.background='#f39c12'">
+      ↓ Download Update
     </button>
   `;
   document.body.appendChild(el);

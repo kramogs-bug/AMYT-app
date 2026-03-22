@@ -23,7 +23,7 @@ import time
 class Logger:
     def __init__(self, console_output: bool = True, cooldown: float = 10.0):
         self.logs = []
-        self._max_memory_logs = 2000
+        self._max_memory_logs = 500
         # In a frozen .exe built with console=False there is no console window —
         # printing is silently dropped at best, and crashes on non-cp1252 characters
         # (e.g. → U+2192) at worst.  Auto-disable console output when frozen.

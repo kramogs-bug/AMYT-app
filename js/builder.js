@@ -972,16 +972,19 @@ function openImgActionModal(defaultAction) {
   document.getElementById('img-timeout').value     = '30';
   document.getElementById('img-drag-dest-x').value = '0';
   document.getElementById('img-drag-dest-y').value = '0';
-  // Arrival fields (NAVIGATE_TO_IMAGE)
+  // Arrival fields (NAVIGATE_TO_IMAGE) — sync defaults from Movement AI tab
   const arEl   = document.getElementById('img-arrival-region');
   const arhEl  = document.getElementById('img-arrival-region-h');
   const acEl   = document.getElementById('img-arrival-confidence');
   const mtEl   = document.getElementById('img-miss-tolerance');
-  if (arEl)  arEl.value  = '200';
-  if (arhEl) arhEl.value = '200';
+  const movAr  = parseInt(document.getElementById('movement-arrival-region')?.value)   || 200;
+  const movArh = parseInt(document.getElementById('movement-arrival-region-h')?.value) || movAr;
+  const movAc  = parseFloat(document.getElementById('movement-arrival-confidence')?.value) || 0.85;
+  if (arEl)  arEl.value  = String(movAr);
+  if (arhEl) arhEl.value = String(movArh);
   const arhSlider = document.getElementById('img-arrival-region-h-slider');
-  if (arhSlider) arhSlider.value = '200';
-  if (acEl) acEl.value = '0.85';
+  if (arhSlider) arhSlider.value = String(movArh);
+  if (acEl) acEl.value = movAc.toFixed(2);
   if (mtEl) mtEl.value = '3';
 
   document.querySelectorAll('#img-action-tabs .img-tab').forEach(btn => {

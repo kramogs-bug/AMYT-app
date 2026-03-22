@@ -1,10 +1,13 @@
 # Build output — never commit these
 dist/
 build/
+installer_output/
 *.spec.bak
 __pycache__/
 *.pyc
 *.pyo
+
+# Virtual environments
 .venv/
 venv/
 env/
@@ -16,15 +19,12 @@ storage/learning_data.json
 storage/macro_db.json
 logs/
 
+# Large installer/runtime files
+*.exe
+vc_redist.x64.exe
+MicrosoftEdgeWebview2Setup.exe
+
 # OS files
 .DS_Store
 Thumbs.db
 desktop.ini
-
-echo "installer_output/" >> .gitignore
-echo "dist/" >> .gitignore
-echo "build/" >> .gitignore
-echo "__pycache__/" >> .gitignore
-echo "*.exe" >> .gitignore
-echo "vc_redist.x64.exe" >> .gitignore
-echo "MicrosoftEdgeWebview2Setup.exe" >> .gitignore

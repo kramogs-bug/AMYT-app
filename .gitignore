@@ -20,3 +20,11 @@ logs/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+echo "installer_output/" >> .gitignore
+echo "dist/" >> .gitignore
+echo "build/" >> .gitignore
+echo "__pycache__/" >> .gitignore
+echo "*.exe" >> .gitignore
+echo "vc_redist.x64.exe" >> .gitignore
+echo "MicrosoftEdgeWebview2Setup.exe" >> .gitignore

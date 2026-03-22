@@ -2,7 +2,7 @@
   "app_enabled": true,
   "min_version": "1.0.0",
   "latest_version": "1.0.1",
-  "force_update": true,
+  "force_update": false,
   "message": "Hello user! This is version 1.0.1 so you may encounter bugs as I haven't fully tested it yet. I'm a solo dev — thank you for your patience! 🙏",
   "download_url": "https://github.com/kramogs-bug/AMYT-app/releases/latest"
 }

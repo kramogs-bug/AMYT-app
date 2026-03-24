@@ -261,8 +261,18 @@ function updateLineCount() {
   const editor  = document.getElementById('script-editor');
   const counter = document.getElementById('line-count');
   if (!editor || !counter) return;
-  const lines = editor.value.split('\n').length;
+  const val   = editor.value;
+  const lines = val.split('\n').length;
   counter.textContent = `${lines} line${lines !== 1 ? 's' : ''}`;
+  // ── Cursor position (Ln / Col) ────────────────────────────
+  const posEl = document.getElementById('cursor-pos');
+  if (posEl) {
+    const pos    = editor.selectionStart ?? 0;
+    const before = val.slice(0, pos);
+    const ln     = before.split('\n').length;
+    const col    = pos - before.lastIndexOf('\n');
+    posEl.textContent = `Ln ${ln}, Col ${col}`;
+  }
 }
 
 async function clearScript() {
@@ -346,7 +356,10 @@ function updateFilenameDisplay() {
 document.addEventListener('DOMContentLoaded', () => {
   const editor = document.getElementById('script-editor');
   if (editor) {
-    editor.addEventListener('input', updateLineCount);
+    editor.addEventListener('input',   updateLineCount);
+    editor.addEventListener('keyup',   updateLineCount);
+    editor.addEventListener('mouseup', updateLineCount);
+    editor.addEventListener('select',  updateLineCount);
     editor.addEventListener('keydown', (e) => {
       if (e.key === 'z' && e.ctrlKey) return;
 
@@ -662,9 +675,31 @@ async function loadSettings() {
 }
 
 function updateShortcutBar(s) {
-  document.getElementById('sb-play').textContent  = `▶ Play: ${(s.shortcut_play  || 'ctrl+r').toUpperCase()}`;
-  document.getElementById('sb-stop').textContent  = `⬛ Stop: ${(s.shortcut_stop  || 'ctrl+q').toUpperCase()}`;
-  document.getElementById('sb-pause').textContent = `⏸ Pause: ${(s.shortcut_pause || 'ctrl+p').toUpperCase()}`;
+  const play  = (s.shortcut_play  || 'ctrl+r').toUpperCase();
+  const stop  = (s.shortcut_stop  || 'ctrl+q').toUpperCase();
+  const pause = (s.shortcut_pause || 'ctrl+p').toUpperCase();
+
+  document.getElementById('sb-play').textContent  = `▶ Play: ${play}`;
+  document.getElementById('sb-stop').textContent  = `⬛ Stop: ${stop}`;
+  document.getElementById('sb-pause').textContent = `⏸ Pause: ${pause}`;
+
+  // ── Patch button title + data-tip attrs with live shortcut hint ─
+  const runBtn   = document.querySelector('.ctrl-run-btn');
+  const stopBtn  = document.querySelector('.btn-stop');
+  const pauseBtn = document.getElementById('btn-pause-script');
+
+  if (runBtn) {
+    runBtn.title            = `Run the full script  [${play}]`;
+    runBtn.dataset.tip      = `Run script  [${play}]`;
+  }
+  if (stopBtn) {
+    stopBtn.title           = `Stop the running script immediately  [${stop}]`;
+    stopBtn.dataset.tip     = `Stop script  [${stop}]`;
+  }
+  if (pauseBtn) {
+    pauseBtn.title          = `Pause or resume a running script  [${pause}]`;
+    pauseBtn.dataset.tip    = `Pause / resume  [${pause}]`;
+  }
 }
 
 async function saveSettings() {
@@ -690,24 +725,57 @@ async function saveSettings() {
 function captureShortcut(inputId) {
   _shortcutCapturing = inputId;
   const inp = document.getElementById(inputId);
-  inp.value = '⌨ Press shortcut...';
+  inp.value = '\u2328 Press shortcut...';
   inp.classList.add('capturing');
 
-  const handler = (e) => {
-    e.preventDefault(); e.stopPropagation();
-    const parts = [];
-    if (e.ctrlKey)  parts.push('ctrl');
-    if (e.altKey)   parts.push('alt');
-    if (e.shiftKey) parts.push('shift');
-    const key = e.key.toLowerCase();
-    if (!['control','alt','shift','meta'].includes(key)) {
-      parts.push(key === ' ' ? 'space' : key);
-    } else { return; }
-    inp.value = parts.join('+');
+  // Keys WebView2 intercepts before JS can see them when pressed alone.
+  // They work fine WITH a modifier (Ctrl+F5 etc.) because the browser
+  // doesn't treat those as its own shortcuts.
+  const WEBVIEW_RESERVED = new Set(['f5', 'f11', 'f12']);
+
+  // Cancel capture on Escape
+  const cleanup = () => {
     inp.classList.remove('capturing');
     _shortcutCapturing = null;
     document.removeEventListener('keydown', handler, { capture: true });
   };
+
+  const handler = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const key = e.key.toLowerCase();
+
+    // Escape cancels — restore previous value
+    if (key === 'escape') {
+      inp.value = inp.dataset.prev || '';
+      cleanup();
+      return;
+    }
+
+    // Ignore bare modifier keypresses — keep listening
+    if (['control', 'alt', 'shift', 'meta'].includes(key)) return;
+
+    const parts = [];
+    if (e.ctrlKey)  parts.push('ctrl');
+    if (e.altKey)   parts.push('alt');
+    if (e.shiftKey) parts.push('shift');
+    parts.push(key === ' ' ? 'space' : key);
+
+    // Single function keys reserved by WebView2 can't be captured alone.
+    // Warn and keep listening so the user can try a modifier combo.
+    if (WEBVIEW_RESERVED.has(key) && parts.length === 1) {
+      inp.value = `\u26A0 ${key.toUpperCase()} is reserved — add Ctrl or Alt`;
+      setTimeout(() => { inp.value = '\u2328 Press shortcut...'; }, 2000);
+      return;
+    }
+
+    inp.value = parts.join('+');
+    cleanup();
+  };
+
+  // Store previous value so Escape can restore it
+  inp.dataset.prev = inp.value !== '\u2328 Press shortcut...' ? inp.value : '';
   document.addEventListener('keydown', handler, { capture: true });
 }
 

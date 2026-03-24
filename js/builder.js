@@ -1495,6 +1495,34 @@ function openImgAction(defaultAction) {
 
 let _openDropId = null;
 
+function toggleBuilderDropbar() {
+  const toolbar = document.getElementById('builder-toolbar');
+  const icon    = document.getElementById('bld-toggle-icon');
+  if (!toolbar) return;
+  const isCollapsed = toolbar.classList.toggle('dropbar-collapsed');
+  // Persist preference so it survives tab switches
+  try { localStorage.setItem('bld-dropbar-collapsed', isCollapsed ? '1' : '0'); } catch(e) {}
+  // Rotate the chevron icon
+  if (icon) icon.style.transform = isCollapsed ? 'rotate(-90deg)' : '';
+  // Update button title for discoverability
+  const btn = document.getElementById('bld-toolbar-toggle');
+  if (btn) btn.title = isCollapsed ? 'Show Insert categories' : 'Hide Insert categories';
+}
+
+// Restore collapsed state on page load
+(function restoreDropbarState() {
+  try {
+    if (localStorage.getItem('bld-dropbar-collapsed') === '1') {
+      const toolbar = document.getElementById('builder-toolbar');
+      const icon    = document.getElementById('bld-toggle-icon');
+      const btn     = document.getElementById('bld-toolbar-toggle');
+      if (toolbar) toolbar.classList.add('dropbar-collapsed');
+      if (icon)    icon.style.transform = 'rotate(-90deg)';
+      if (btn)     btn.title = 'Show Insert categories';
+    }
+  } catch(e) {}
+})();
+
 function toggleBuilderDrop(id) {
   const panel = document.getElementById('bld-drop-panel-' + id);
   const pill  = panel && panel.previousElementSibling;

@@ -85,7 +85,8 @@ class API:
         self._hk_play       = None
         self._hk_stop       = None
         self._hk_pause      = None
-        self._last_game_hwnd = None   # last foreground window that isn't this app
+        self._last_game_hwnd     = None   # last foreground window that isn't this app
+        self._pending_target_hwnd = None   # window captured at hotkey-press time; consumed by run_script()
 
         # Background thread — continuously tracks the last non-app active window
         # so clicking the UI play button targets the correct game window
@@ -185,27 +186,49 @@ class API:
         if (self._macro_thread and self._macro_thread.is_alive()
                 and not self.macro_engine._stop_event.is_set()):
             return {"status": "error", "message": "Macro is already running"}
-        # Use the last known non-app window as the keyboard target.
-        # This works for both hotkey (game is still foreground) and
-        # UI play button (game was foreground before user clicked the app).
+        # Resolve the keyboard target window using the most reliable source
+        # available, in priority order:
+        #
+        #   1. _pending_target_hwnd — set by the hotkey callback the instant the
+        #      key was pressed, while the game window was still foreground.
+        #      This is consumed (cleared) here so it doesn't bleed into the next
+        #      run.  This is the only reliable source when triggered by hotkey,
+        #      because by the time run_script() executes, evaluate_js() may have
+        #      already raised the app window to the foreground.
+        #
+        #   2. Current foreground window (if it is NOT this process) — covers
+        #      rare cases where the play button is clicked while a game window
+        #      happens to still be in front (e.g. borderless fullscreen).
+        #
+        #   3. _last_game_hwnd — the background tracker's last seen non-app
+        #      window.  Used when the UI play button is clicked normally and the
+        #      app window is already foreground.
         try:
-            import win32gui as _w
-            fg = _w.GetForegroundWindow()
-            import os, win32process as _wp
-            _, fg_pid = _wp.GetWindowThreadProcessId(fg)
-            if fg_pid != os.getpid():
-                # Triggered by hotkey — game is still in front, use it directly
-                self.keyboard.set_target_hwnd(fg)
+            import win32gui as _w, win32process as _wp
+            if self._pending_target_hwnd:
+                target = self._pending_target_hwnd
+                self._pending_target_hwnd = None   # consume
+                self.keyboard.set_target_hwnd(target)
                 self.logger.log(
-                    f"run_script: target = foreground '{_w.GetWindowText(fg)}'"
+                    f"run_script: target = hotkey-captured "
+                    f"'{_w.GetWindowText(target)}' (hwnd={target})"
                 )
-            elif self._last_game_hwnd:
-                # Triggered from UI — use the last tracked game window
-                self.keyboard.set_target_hwnd(self._last_game_hwnd)
-                self.logger.log(
-                    f"run_script: target = last game window "
-                    f"'{_w.GetWindowText(self._last_game_hwnd)}'"
-                )
+            else:
+                fg = _w.GetForegroundWindow()
+                _, fg_pid = _wp.GetWindowThreadProcessId(fg)
+                if fg_pid != os.getpid():
+                    # UI clicked while a non-app window was still foreground
+                    self.keyboard.set_target_hwnd(fg)
+                    self.logger.log(
+                        f"run_script: target = foreground '{_w.GetWindowText(fg)}'"
+                    )
+                elif self._last_game_hwnd:
+                    # Normal UI play button path — use background tracker
+                    self.keyboard.set_target_hwnd(self._last_game_hwnd)
+                    self.logger.log(
+                        f"run_script: target = last game window "
+                        f"'{_w.GetWindowText(self._last_game_hwnd)}'"
+                    )
         except Exception:
             pass  # pywin32 not installed — keys work normally without focus
         self._script_running = True
@@ -227,12 +250,16 @@ class API:
             return {"status": "error", "message": "Macro is already running"}
         try:
             import win32gui as _w, win32process as _wp, os as _os
-            fg = _w.GetForegroundWindow()
-            _, fg_pid = _wp.GetWindowThreadProcessId(fg)
-            if fg_pid != _os.getpid():
-                self.keyboard.set_target_hwnd(fg)
-            elif self._last_game_hwnd:
-                self.keyboard.set_target_hwnd(self._last_game_hwnd)
+            if self._pending_target_hwnd:
+                self.keyboard.set_target_hwnd(self._pending_target_hwnd)
+                self._pending_target_hwnd = None
+            else:
+                fg = _w.GetForegroundWindow()
+                _, fg_pid = _wp.GetWindowThreadProcessId(fg)
+                if fg_pid != _os.getpid():
+                    self.keyboard.set_target_hwnd(fg)
+                elif self._last_game_hwnd:
+                    self.keyboard.set_target_hwnd(self._last_game_hwnd)
         except Exception:
             pass
         self._script_running = True
@@ -936,12 +963,16 @@ class API:
 
                     # ── Capture active window HWND right now (Jitbit-style) ──
                     # The game is still in the foreground at this exact moment.
+                    # We store it in _pending_target_hwnd so run_script() can
+                    # consume it directly — bypassing the GetForegroundWindow()
+                    # call inside run_script() which by then may see the app
+                    # window itself (raised by evaluate_js / WebView2).
                     if js_func == "globalHotkeyPlay()":
                         try:
                             import win32gui as _w
                             hwnd = _w.GetForegroundWindow()
-                            self._last_game_hwnd = hwnd  # also update tracker
-                            self.keyboard.set_target_hwnd(hwnd)
+                            self._last_game_hwnd      = hwnd   # update background tracker too
+                            self._pending_target_hwnd = hwnd   # consumed by run_script()
                             self.logger.log(
                                 f"Hotkey: captured game window "
                                 f"'{_w.GetWindowText(hwnd)}' (hwnd={hwnd})"
@@ -2526,12 +2557,56 @@ def main(startup_amyt: str = None):
 
 
 if __name__ == "__main__":
+    # ── DPI awareness: must be set BEFORE any window is created ──────────────
+    # Without this, Windows bitmap-scales the entire process at display
+    # scalings above 100% (e.g. 125 %, 150 %).  That pushes layout elements
+    # (sidebar, controls) upward because the OS-reported window size no longer
+    # matches the actual CSS/WebView2 pixels.
+    # PROCESS_PER_MONITOR_DPI_AWARE (value 2) tells Windows to give us raw
+    # physical pixels and let WebView2 / Chromium handle its own DPI scaling,
+    # which it already does correctly via devicePixelRatio.
+    try:
+        import ctypes as _ctypes
+        _shcore = _ctypes.windll.shcore
+        # SetProcessDpiAwareness:
+        #   0 = unaware  (OS scales bitmap — causes layout shift at 125 %)
+        #   1 = system aware
+        #   2 = per-monitor aware (best — no OS bitmap scaling at all)
+        _shcore.SetProcessDpiAwareness(2)
+    except Exception:
+        # Fallback for very old Windows builds that lack shcore
+        try:
+            _ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
     # Required by PyInstaller: must be the very first call in __main__ when the
     # app is frozen as a .exe.  Without this, any library that uses
     # multiprocessing internally (e.g. certain cv2/numpy builds) will cause the
     # frozen exe to spawn infinite child processes and immediately crash.
     import multiprocessing
     multiprocessing.freeze_support()
+
+    # ── Single-instance guard ─────────────────────────────────────────────────
+    # Create a named kernel mutex. If ERROR_ALREADY_EXISTS (183) is returned,
+    # another instance already owns it — show an error and exit immediately.
+    # Windows releases the mutex automatically when this process terminates,
+    # so no explicit CloseHandle is needed on the happy path.
+    try:
+        import ctypes as _ctypes2
+        _MUTEX_NAME = "Global\\AMYT_SingleInstanceMutex"
+        _mutex_handle = _ctypes2.windll.kernel32.CreateMutexW(None, True, _MUTEX_NAME)
+        if _ctypes2.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+            _ctypes2.windll.user32.MessageBoxW(
+                0,
+                "AMYT is already running.\n\nCheck your system tray or taskbar.",
+                "AMYT \u2014 Already Running",
+                0x00000010,  # MB_ICONERROR
+            )
+            import sys as _sys_exit
+            _sys_exit.exit(1)
+    except Exception:
+        pass  # Non-Windows or ctypes unavailable — skip guard silently
 
     # Option 2: if launched with a .amyt file argument (double-click), auto-import it
     import sys as _sys

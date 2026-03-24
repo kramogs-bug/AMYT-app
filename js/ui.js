@@ -557,6 +557,23 @@ function setStatus(state, text) {
     if (state === 'running')   nav.classList.add('is-running');
     if (state === 'recording') nav.classList.add('is-recording');
   }
+  // ── Reflect state in the OS window title bar ──────────────
+  // Users can see the status even when the app is minimised or
+  // behind another window (e.g. the game they are automating).
+  const BASE = 'AMYT';
+  const titles = {
+    running:   '\u25B6 Running — ' + BASE,
+    recording: '\u23FA Recording — ' + BASE,
+    idle:      BASE,
+  };
+  // 'idle' catches: Idle, Stopped, Paused, Error, Done — all non-active states
+  const key = (state === 'running' || state === 'recording') ? state : 'idle';
+  // Special-case paused: show pause symbol
+  if (text && text.toLowerCase().includes('pause')) {
+    document.title = '\u23F8 Paused — ' + BASE;
+  } else {
+    document.title = titles[key] || BASE;
+  }
 }
 
 // ── CHEAT SHEET MODAL ──────────────────────────────────────

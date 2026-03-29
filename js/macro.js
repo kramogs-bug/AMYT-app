@@ -23,7 +23,9 @@ async function startRecording() {
   }
 
   try {
-    await window.pywebview.api.start_recording(countdown);
+    // Pass 0 so Python skips its own internal countdown —
+    // the JS loop above already handled the full delay and UI feedback.
+    await window.pywebview.api.start_recording(0);
     isRecording = true;
     setStatus('recording', 'Recording...');
     nativeToast('⏺ Recording started — click Stop Rec when done', 'info');

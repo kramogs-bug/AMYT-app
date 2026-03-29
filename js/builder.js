@@ -1575,3 +1575,627 @@ function _builderDropOutside(e) {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && _openDropId) closeBuilderDrop();
 });
+
+// ══════════════════════════════════════════════════════════
+//  EDIT-MODE SUPPORT
+//  When the line-panel ✏️ button is clicked, lpEdit() sets
+//  _editLineIdx then calls _openBuilderModalForEdit(rawLine).
+//  Every modal confirm function checks _editLineIdx; if set
+//  it calls _commitEditLine(snippet) to replace that line
+//  in-place instead of inserting a new one.
+// ══════════════════════════════════════════════════════════
+
+// ── Core replace helper ────────────────────────────────────
+function _commitEditLine(snippet) {
+  if (typeof _editLineIdx === 'undefined' || _editLineIdx === null) return false;
+  if (_guardRunning('edit a script line')) return false;
+  _pushUndo();
+  const editor = document.getElementById('script-editor');
+  const lines  = editor.value.split('\n');
+  // Only replace the single targeted line (first line of snippet for
+  // multi-line snippets — complex blocks like IF_IMAGE keep their body intact)
+  lines[_editLineIdx] = snippet.split('\n')[0];
+  editor.value = lines.join('\n');
+  _editLineIdx = null;
+  updateLineCount();
+  renderScriptLines();
+  renderSyntaxHighlight();
+  toast('Line updated', 'info');
+  return true;
+}
+
+// ── Tokeniser helper ────────────────────────────────────────
+function _tokeniseLine(raw) {
+  // Handles quoted strings as single tokens
+  return raw.trim().match(/(?:"[^"]*"|\S+)/g) || [];
+}
+
+function _parseKwargs(args) {
+  // Returns { positional: [], kw: { key: value } }
+  const positional = [], kw = {};
+  args.forEach(a => {
+    if (/^[\w]+=/i.test(a)) {
+      const eq  = a.indexOf('=');
+      kw[a.slice(0, eq).toLowerCase()] = a.slice(eq + 1);
+    } else {
+      positional.push(a);
+    }
+  });
+  return { positional, kw };
+}
+
+// ── Route a raw script line to the right builder modal ─────
+function _openBuilderModalForEdit(raw) {
+  const tokens = _tokeniseLine(raw);
+  if (!tokens.length) return false;
+  const cmd  = tokens[0].toUpperCase();
+  const args = tokens.slice(1);
+
+  // ── 1. Comment / empty → use plain text editor ───────────
+  if (!cmd || cmd.startsWith('#')) return false;
+
+  // ── 2. Mouse commands ─────────────────────────────────────
+  const mouseMap = {
+    CLICK:'click', DOUBLE_CLICK:'dblclick', RIGHT_CLICK:'rclick',
+    MOVE:'move', MOVE_HUMAN:'movehuman', SCROLL:'scroll', DRAG:'drag',
+  };
+  if (mouseMap[cmd]) {
+    openMouseCmdCoordPanel(mouseMap[cmd]);
+    _prefillMouseModal(cmd, args);
+    return true;
+  }
+
+  // ── 3. Key commands ───────────────────────────────────────
+  const keyMap = { PRESS:'press', HOLD:'hold', RELEASE:'release' };
+  if (keyMap[cmd]) {
+    openKeyCapture(keyMap[cmd]);
+    if (args[0]) {
+      setTimeout(() => {
+        _keyCaptureKey = args[0];
+        const disp = document.getElementById('key-display');
+        if (disp) { disp.textContent = args[0].toUpperCase(); disp.className = 'key-display captured'; }
+        const label = CMD_LABELS[keyMap[cmd]] || cmd;
+        const prev  = document.getElementById('key-preview');
+        if (prev)  prev.textContent = `→ will insert: ${label} ${args[0]}`;
+        const btn   = document.getElementById('key-confirm-btn');
+        if (btn)   btn.disabled = false;
+      }, 60);
+    }
+    return true;
+  }
+
+  // ── 4. TYPE / HOTKEY → mini-action modal ──────────────────
+  if (cmd === 'TYPE' || cmd === 'HOTKEY') {
+    _miniActionTarget    = null;  // edit mode — no redirect target
+    _miniActionCmd       = cmd;
+    _miniActionPreviewFn = null;
+    const title = document.getElementById('mini-action-title');
+    const body  = document.getElementById('mini-action-body');
+    if (title) title.textContent = _miniCmdLabel(cmd);
+    if (body)  body.innerHTML    = _miniActionFields(cmd);
+    document.getElementById('mini-action-overlay').classList.remove('hidden');
+    setTimeout(() => {
+      if (cmd === 'TYPE') {
+        const el = document.getElementById('mini-type-text');
+        if (el) el.value = args.join(' ');
+        el?.focus();
+      } else {
+        const el = document.getElementById('mini-hotkey');
+        if (el) el.value = args[0] || '';
+        el?.focus();
+      }
+    }, 60);
+    return true;
+  }
+
+  // ── 5. Image / Find commands → Image Action modal ─────────
+  const imgCmds = new Set([
+    'FIND_CLICK','FIND_DOUBLE_CLICK','FIND_RIGHT_CLICK',
+    'FIND_MOVE','FIND_HOLD','FIND_DRAG',
+    'CLICK_IMAGE','DOUBLE_CLICK_IMAGE','RIGHT_CLICK_IMAGE',
+    'CLICK_RANDOM_OFFSET','DOUBLE_CLICK_RANDOM_OFFSET','RIGHT_CLICK_RANDOM_OFFSET',
+    'WAIT_IMAGE','WAIT_IMAGE_GONE','NAVIGATE_TO_IMAGE',
+  ]);
+  if (imgCmds.has(cmd)) {
+    // Force IMAGE detection type
+    _detectionType = 'IMAGE';
+    document.querySelectorAll('#img-detection-tabs .img-tab').forEach(b =>
+      b.classList.toggle('active', b.dataset.detection === 'IMAGE'));
+    openImgActionModal(cmd);
+    _prefillImgActionModal(cmd, args);
+    return true;
+  }
+
+  // ── 6. IF_IMAGE / WHILE_IMAGE ─────────────────────────────
+  //    We only edit the header line (template / confidence).
+  //    The body is left intact — _commitEditLine replaces only line[idx].
+  if (cmd === 'IF_IMAGE' || cmd === 'IF_NOT_IMAGE') {
+    _detectionType = 'IMAGE';
+    openImgActionModal(cmd === 'IF_IMAGE' ? 'IF_IMAGE' : 'IF_NOT_IMAGE');
+    _prefillImgActionModal(cmd, args);
+    return true;
+  }
+  if (cmd === 'WHILE_IMAGE') {
+    _detectionType = 'IMAGE';
+    openImgActionModal('WHILE_IMAGE');
+    _prefillImgActionModal(cmd, args);
+    return true;
+  }
+
+  // ── 7. TEXT_* commands ────────────────────────────────────
+  const textMatch = /^TEXT_(CLICK|DOUBLE_CLICK|RIGHT_CLICK|MOVE|HOLD|DRAG)$/.exec(cmd);
+  if (textMatch) {
+    openTextAction(textMatch[1]);
+    _prefillTextOrColorModal('TEXT', textMatch[1], args);
+    return true;
+  }
+
+  // ── 8. COLOR_* commands ───────────────────────────────────
+  const colorMatch = /^COLOR_(CLICK|DOUBLE_CLICK|RIGHT_CLICK|MOVE|HOLD|DRAG|WAIT)$/.exec(cmd);
+  if (colorMatch) {
+    openColorAction(colorMatch[1]);
+    _prefillTextOrColorModal('COLOR', colorMatch[1], args);
+    return true;
+  }
+
+  // ── 9. WAIT / WAIT_RANDOM ─────────────────────────────────
+  if (cmd === 'WAIT') {
+    openWaitConfig();
+    setTimeout(() => {
+      setWaitMode('fixed');
+      const dur = parseFloat(args[0]) || 1;
+      document.getElementById('wait-duration').value = dur;
+      document.getElementById('wait-unit').value     = 's';
+    }, 60);
+    return true;
+  }
+  if (cmd === 'WAIT_RANDOM') {
+    openWaitConfig();
+    setTimeout(() => {
+      setWaitMode('random');
+      document.getElementById('wait-rand-min').value = parseFloat(args[0]) || 1.0;
+      document.getElementById('wait-rand-max').value = parseFloat(args[1]) || 3.0;
+      updateWaitRandomPreview();
+    }, 60);
+    return true;
+  }
+
+  // ── 10. TOAST ─────────────────────────────────────────────
+  if (cmd === 'TOAST') {
+    openToastConfig();
+    setTimeout(() => {
+      const kindValues = new Set(['info','warn','error']);
+      const msgParts = [], kind = args.find(a => kindValues.has(a.toLowerCase())) || 'info';
+      args.forEach(a => { if (!kindValues.has(a.toLowerCase())) msgParts.push(a); });
+      document.getElementById('toast-msg-input').value = msgParts.join(' ');
+      const radio = document.querySelector(`input[name="toast-kind"][value="${kind}"]`);
+      if (radio) { radio.checked = true; radio.dispatchEvent(new Event('change')); }
+    }, 60);
+    return true;
+  }
+
+  // ── 11. LABEL ─────────────────────────────────────────────
+  if (cmd === 'LABEL') {
+    openLabelConfig();
+    setTimeout(() => {
+      const el = document.getElementById('label-name-input');
+      if (el) el.value = args[0] || '';
+    }, 60);
+    return true;
+  }
+
+  // ── 12. GOTO ──────────────────────────────────────────────
+  if (cmd === 'GOTO') {
+    openGotoConfig();
+    setTimeout(() => {
+      const el = document.getElementById('goto-label-input');
+      if (el) el.value = args[0] || '';
+    }, 60);
+    return true;
+  }
+
+  // ── 13. SET variable ──────────────────────────────────────
+  if (cmd === 'SET') {
+    openSetVariableDialog();
+    setTimeout(() => {
+      // SET varname = expression
+      const eqIdx = args.indexOf('=');
+      const name  = eqIdx > 0  ? args.slice(0, eqIdx).join('')  : (args[0] || '');
+      const expr  = eqIdx >= 0 ? args.slice(eqIdx + 1).join(' ') : '';
+      const nameEl = document.getElementById('var-name-input');
+      const exprEl = document.getElementById('var-expr-input');
+      if (nameEl) nameEl.value = name;
+      if (exprEl) exprEl.value = expr;
+      if (typeof updateVarPreview === 'function') updateVarPreview();
+    }, 60);
+    return true;
+  }
+
+  // ── 14. Anything else → plain-text fallback ───────────────
+  return false;
+}
+
+// ── Prefill helpers ────────────────────────────────────────
+
+function _prefillMouseModal(cmd, args) {
+  setTimeout(() => {
+    switch (cmd) {
+      case 'CLICK': case 'DOUBLE_CLICK': case 'RIGHT_CLICK': case 'MOVE': case 'MOVE_HUMAN': {
+        const x = document.getElementById('mccp-x');
+        const y = document.getElementById('mccp-y');
+        if (x) x.value = parseInt(args[0]) || 0;
+        if (y) y.value = parseInt(args[1]) || 0;
+        break;
+      }
+      case 'SCROLL': {
+        const a = document.getElementById('mccp-amount');
+        if (a) a.value = parseInt(args[0]) || -3;
+        break;
+      }
+      case 'DRAG': {
+        const f = (id, val) => { const el = document.getElementById(id); if (el) el.value = parseInt(val) || 0; };
+        f('mccp-x1', args[0]); f('mccp-y1', args[1]);
+        f('mccp-x2', args[2]); f('mccp-y2', args[3]);
+        break;
+      }
+    }
+    _updateMouseCmdPreview();
+  }, 80);
+}
+
+function _prefillImgActionModal(cmd, args) {
+  // Wait a tick longer so the template <select> has loaded via refreshImgActionTemplates
+  setTimeout(() => {
+    const { positional, kw } = _parseKwargs(args);
+    const tplName = (positional[0] || '').replace(/\.png$/i, '');
+
+    // ── Set action tab ──
+    const allTabs = document.querySelectorAll(
+      '#img-action-tabs .img-tab, #img-action-tabs-image .img-tab, ' +
+      '#img-action-tabs-text .img-tab, #img-action-tabs-color .img-tab'
+    );
+    allTabs.forEach(b => b.classList.toggle('active', b.dataset.action === cmd));
+    _imgActiveAction = cmd;
+    _updateImgActionVisibility();
+
+    // ── Template dropdown ──
+    const tplSel = document.getElementById('img-action-template');
+    if (tplSel && tplName) {
+      // Try exact match (no .png), then with .png, then partial
+      let matched = false;
+      for (const opt of tplSel.options) {
+        const v = opt.value.replace(/\.png$/i, '');
+        if (v === tplName) { tplSel.value = opt.value; matched = true; break; }
+      }
+      if (!matched) {
+        // Retry after templates finish loading
+        setTimeout(() => {
+          for (const opt of tplSel.options) {
+            if (opt.value.replace(/\.png$/i, '') === tplName) { tplSel.value = opt.value; break; }
+          }
+          imgActionPreview();
+        }, 400);
+      }
+    }
+
+    // ── Confidence ──
+    const confEl = document.getElementById('img-confidence');
+    if (confEl && kw.confidence) confEl.value = kw.confidence;
+
+    // ── Anchor ──
+    if (kw.anchor) {
+      document.querySelectorAll('.anchor-btn').forEach(b => b.classList.remove('active'));
+      const ab = document.querySelector(`.anchor-btn[data-anchor="${kw.anchor}"]`);
+      if (ab) ab.classList.add('active');
+      const lbl = document.getElementById('anchor-selected-label');
+      if (lbl) lbl.textContent = kw.anchor;
+    }
+
+    // ── Offsets ──
+    const oxEl = document.getElementById('img-offset-x');
+    const oyEl = document.getElementById('img-offset-y');
+    if (oxEl && kw.offsetx) oxEl.value = kw.offsetx;
+    if (oyEl && kw.offsety) oyEl.value = kw.offsety;
+
+    // ── Timeout (WAIT_IMAGE / WAIT_IMAGE_GONE) ──
+    if (cmd === 'WAIT_IMAGE' || cmd === 'WAIT_IMAGE_GONE') {
+      const toEl = document.getElementById('img-timeout');
+      if (toEl && positional[1]) toEl.value = positional[1];
+    }
+
+    // ── Drag destination (FIND_DRAG) ──
+    if (cmd === 'FIND_DRAG') {
+      const dxEl = document.getElementById('img-drag-dest-x');
+      const dyEl = document.getElementById('img-drag-dest-y');
+      // FIND_DRAG template destX destY [kwargs]
+      if (dxEl && positional[1]) dxEl.value = positional[1];
+      if (dyEl && positional[2]) dyEl.value = positional[2];
+    }
+
+    imgActionPreview();
+  }, 180);
+}
+
+function _prefillTextOrColorModal(type, action, args) {
+  setTimeout(() => {
+    const { positional, kw } = _parseKwargs(args);
+    _imgActiveAction = action;
+
+    if (type === 'TEXT') {
+      const textEl = document.getElementById('img-text-input');
+      const confEl = document.getElementById('img-ocr-conf');
+      // First positional is the quoted text
+      if (textEl) textEl.value = (positional[0] || '').replace(/^"|"$/g, '');
+      if (confEl && kw.confidence) confEl.value = kw.confidence;
+    } else {
+      const colorEl  = document.getElementById('img-color-input');
+      const pickerEl = document.getElementById('img-color-picker');
+      const swatchEl = document.getElementById('img-color-swatch');
+      const tolEl    = document.getElementById('img-tolerance');
+      if (colorEl  && positional[0]) { colorEl.value = positional[0]; }
+      if (pickerEl && positional[0]) { pickerEl.value = positional[0]; }
+      if (swatchEl && positional[0]) { swatchEl.style.background = positional[0]; }
+      if (tolEl    && kw.tolerance)  { tolEl.value = kw.tolerance; }
+    }
+
+    // Anchor / offsets shared
+    if (kw.anchor) {
+      document.querySelectorAll('.anchor-btn').forEach(b => b.classList.remove('active'));
+      const ab = document.querySelector(`.anchor-btn[data-anchor="${kw.anchor}"]`);
+      if (ab) ab.classList.add('active');
+      const lbl = document.getElementById('anchor-selected-label');
+      if (lbl) lbl.textContent = kw.anchor;
+    }
+    const oxEl = document.getElementById('img-offset-x');
+    const oyEl = document.getElementById('img-offset-y');
+    if (oxEl && kw.offsetx) oxEl.value = kw.offsetx;
+    if (oyEl && kw.offsety) oyEl.value = kw.offsety;
+
+    _updateImgActionVisibility();
+    imgActionPreview();
+  }, 180);
+}
+
+// ══════════════════════════════════════════════════════════
+//  PATCH CONFIRM FUNCTIONS FOR EDIT MODE
+//  Each patched function: if _editLineIdx is set, call
+//  _commitEditLine(snippet) instead of the normal insert path.
+// ══════════════════════════════════════════════════════════
+
+// ── Mouse coord confirm ───────────────────────────────────
+(function() {
+  const _orig = mouseCmdCoordConfirm;
+  mouseCmdCoordConfirm = function() {
+    const fields = _MOUSE_CMD_FIELDS[_dndPendingCmd] || [];
+    const values = {};
+    fields.forEach(f => {
+      const el = document.getElementById(`mccp-${f.id}`);
+      values[f.id] = el ? (parseInt(el.value) || 0) : 0;
+    });
+    const snippet = _buildMouseSnippet(_dndPendingCmd, values);
+    if (!snippet) return;
+
+    if (_ifimgRedirectTarget) {
+      const cur = _ifimgRedirectTarget.value;
+      _ifimgRedirectTarget.value = cur ? cur + '\n' + snippet : snippet;
+      _ifimgRedirectTarget.dispatchEvent(new Event('input'));
+      _ifimgRedirectTarget = null;
+      if (_mouseCmdTracking) _mouseCmdStopTrack(false);
+      document.getElementById('mouse-cmd-coord-overlay').classList.add('hidden');
+      _dndPendingCmd = null;
+      return;
+    }
+
+    if (_mouseCmdTracking) _mouseCmdStopTrack(false);
+    document.getElementById('mouse-cmd-coord-overlay').classList.add('hidden');
+    _dndPendingCmd = null;
+
+    // Edit mode: replace line
+    if (typeof _editLineIdx !== 'undefined' && _editLineIdx !== null) {
+      _commitEditLine(snippet);
+      return;
+    }
+    openDndConfirmPanel(snippet);
+  };
+})();
+
+// ── Key capture confirm ───────────────────────────────────
+(function() {
+  const _orig = keyCaptureConfirm;
+  keyCaptureConfirm = function() {
+    if (!_keyCaptureKey) return;
+    const label   = CMD_LABELS[_keyCaptureCmd] || _keyCaptureCmd.toUpperCase();
+    const snippet = `${label} ${_keyCaptureKey}`;
+
+    if (_ifimgRedirectTarget) {
+      const cur = _ifimgRedirectTarget.value;
+      _ifimgRedirectTarget.value = cur ? cur + '\n' + snippet : snippet;
+      _ifimgRedirectTarget.dispatchEvent(new Event('input'));
+      _ifimgRedirectTarget = null;
+      keyCaptureClose();
+      return;
+    }
+
+    // Edit mode: replace line
+    if (typeof _editLineIdx !== 'undefined' && _editLineIdx !== null) {
+      _commitEditLine(snippet);
+      keyCaptureClose();
+      return;
+    }
+
+    insertToEditor(snippet);
+    toast(`Inserted: ${snippet}`, 'info');
+    keyCaptureClose();
+  };
+})();
+
+// ── Image action confirm ──────────────────────────────────
+(function() {
+  const _orig = imgActionConfirm;
+  imgActionConfirm = function() {
+    if (typeof _editLineIdx === 'undefined' || _editLineIdx === null) {
+      _orig();
+      return;
+    }
+    // Build the snippet the same way as the original, then commit
+    const preview = document.getElementById('img-action-preview');
+    const snippet = preview ? preview.textContent.trim() : '';
+    if (!snippet) { toast('Nothing to insert', 'warn'); return; }
+    _commitEditLine(snippet);
+    imgActionCancel();
+  };
+})();
+
+// ── Wait config confirm ───────────────────────────────────
+(function() {
+  const _orig = waitConfigConfirm;
+  waitConfigConfirm = function() {
+    if (typeof _editLineIdx === 'undefined' || _editLineIdx === null) {
+      _orig();
+      return;
+    }
+    let snippet;
+    if (_waitMode === 'random') {
+      let mn = parseFloat(document.getElementById('wait-rand-min').value) || 1.0;
+      let mx = parseFloat(document.getElementById('wait-rand-max').value) || 3.0;
+      mn = Math.round(mn * 1000) / 1000;
+      mx = Math.round(mx * 1000) / 1000;
+      if (mn > mx) [mn, mx] = [mx, mn];
+      snippet = `WAIT_RANDOM ${mn} ${mx}`;
+    } else {
+      let dur = parseFloat(document.getElementById('wait-duration').value) || 1;
+      const unit = document.getElementById('wait-unit').value;
+      if (unit === 'ms') dur = dur / 1000;
+      dur = Math.round(dur * 1000) / 1000;
+      snippet = `WAIT ${dur}`;
+    }
+    _commitEditLine(snippet);
+    document.getElementById('wait-config-overlay').classList.add('hidden');
+  };
+})();
+
+// ── Toast config confirm ──────────────────────────────────
+(function() {
+  const _orig = toastConfigConfirm;
+  toastConfigConfirm = function() {
+    if (typeof _editLineIdx === 'undefined' || _editLineIdx === null) {
+      _orig();
+      return;
+    }
+    const msg  = document.getElementById('toast-msg-input').value.trim() || 'Script message';
+    const kind = document.querySelector('input[name="toast-kind"]:checked')?.value || 'info';
+    _commitEditLine(`TOAST ${msg} ${kind}`);
+    document.getElementById('toast-config-overlay').classList.add('hidden');
+  };
+})();
+
+// ── Label config confirm ──────────────────────────────────
+(function() {
+  const _orig = labelConfigConfirm;
+  labelConfigConfirm = function() {
+    if (typeof _editLineIdx === 'undefined' || _editLineIdx === null) {
+      _orig();
+      return;
+    }
+    const name = document.getElementById('label-name-input').value.trim().replace(/\s+/g, '_');
+    if (!name) { toast('Enter a label name', 'warn'); return; }
+    _commitEditLine(`LABEL ${name}`);
+    document.getElementById('label-config-overlay').classList.add('hidden');
+  };
+})();
+
+// ── Goto config confirm ───────────────────────────────────
+(function() {
+  const _orig = gotoConfigConfirm;
+  gotoConfigConfirm = function() {
+    if (typeof _editLineIdx === 'undefined' || _editLineIdx === null) {
+      _orig();
+      return;
+    }
+    const name = document.getElementById('goto-label-input').value.trim().replace(/\s+/g, '_');
+    if (!name) { toast('Enter a label name', 'warn'); return; }
+    _commitEditLine(`GOTO ${name}`);
+    document.getElementById('goto-config-overlay').classList.add('hidden');
+  };
+})();
+
+// ── Variable insert confirm ───────────────────────────────
+(function() {
+  const _orig = insertVariable;
+  insertVariable = function() {
+    if (typeof _editLineIdx === 'undefined' || _editLineIdx === null) {
+      _orig();
+      return;
+    }
+    const name = document.getElementById('var-name-input').value.trim();
+    const expr = document.getElementById('var-expr-input').value.trim();
+    if (!name) { toast('Enter a variable name', 'warn'); return; }
+    if (!expr) { toast('Enter an expression', 'warn'); return; }
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) {
+      toast('Invalid variable name – use letters, numbers, underscore', 'warn');
+      return;
+    }
+    _commitEditLine(`SET ${name} = ${expr}`);
+    document.getElementById('variable-config-overlay').classList.add('hidden');
+  };
+})();
+
+// ── Mini-action confirm (TYPE, HOTKEY, simple cmds) ────────
+(function() {
+  const _orig = miniActionConfirm;
+  miniActionConfirm = function() {
+    const line = _buildMiniCommand(_miniActionCmd);
+    if (line === null) { toast('Please fill in the required field', 'warn'); return; }
+
+    // Edit mode: no redirect target, replace line
+    if (typeof _editLineIdx !== 'undefined' && _editLineIdx !== null && !_miniActionTarget) {
+      _commitEditLine(line);
+      miniActionCancel();
+      return;
+    }
+
+    _orig();
+  };
+})();
+
+// ── Cancel handlers: clear _editLineIdx so stale state ────
+//    doesn't bleed into the next "normal" builder open
+(function() {
+  const _clearEdit = () => {
+    if (typeof window._editLineIdx !== 'undefined') window._editLineIdx = null;
+    // Access the module-level _editLineIdx via closure
+    if (typeof _editLineIdx !== 'undefined') _editLineIdx = null;
+  };
+
+  // Wrap every cancel that can be reached from edit mode
+  const wraps = [
+    ['mouse-cmd-coord-overlay', 'mouseCmdCoordCancel'],
+    ['key-capture-overlay',     'keyCaptureCancel'],
+    ['img-action-overlay',      'imgActionCancel'],
+    ['wait-config-overlay',     'waitConfigCancel'],
+    ['toast-config-overlay',    null],
+    ['label-config-overlay',    null],
+    ['goto-config-overlay',     null],
+    ['mini-action-overlay',     'miniActionCancel'],
+    ['variable-config-overlay', 'closeVariableDialog'],
+  ];
+
+  // Attach to each overlay's close / cancel button via event delegation
+  document.addEventListener('DOMContentLoaded', () => {
+    wraps.forEach(([overlayId]) => {
+      const overlay = document.getElementById(overlayId);
+      if (!overlay) return;
+      overlay.addEventListener('click', (e) => {
+        // Any "cancel" or "close" button inside the overlay
+        if (e.target.closest('.btn-cancel, [data-dismiss], .key-cancel-btn')) {
+          _clearEdit();
+        }
+      });
+    });
+  });
+
+  // Also clear on Escape (Escape closes all modals)
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') _clearEdit();
+  }, { capture: true });
+})();

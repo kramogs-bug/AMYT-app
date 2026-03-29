@@ -505,9 +505,21 @@ document.addEventListener('DOMContentLoaded', () => {
 let _editLineIdx = null;
 
 function lpEdit(idx) {
-  const lines = document.getElementById('script-editor').value.split('\n');
+  if (_guardRunning('edit a script line')) return;
+  const editor = document.getElementById('script-editor');
+  const lines  = editor.value.split('\n');
+  const raw    = lines[idx] || '';
   _editLineIdx = idx;
-  document.getElementById('line-edit-input').value = lines[idx] || '';
+
+  // Try to open the right builder modal pre-filled with this line's values.
+  // _openBuilderModalForEdit is defined in builder.js and returns true if it
+  // handled the line (so we skip the plain-text fallback).
+  if (typeof _openBuilderModalForEdit === 'function' && _openBuilderModalForEdit(raw)) {
+    return;
+  }
+
+  // Fallback: plain single-line text editor
+  document.getElementById('line-edit-input').value = raw;
   document.getElementById('line-edit-overlay').classList.remove('hidden');
   setTimeout(() => document.getElementById('line-edit-input').focus(), 50);
 }

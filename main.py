@@ -41,7 +41,9 @@ os.chdir(WORK_DIR)   # storage/, logs/ created next to AMYT.exe
 import webview
 import threading
 
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.1.0"
+SUPABASE_URL      = "https://dijvnahqlwxggvhgzglq.supabase.co"   # ← replace
+SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRpanZuYWhxbHd4Z2d2aGd6Z2xxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ3NjEzOTQsImV4cCI6MjA5MDMzNzM5NH0.QCHz5Rzbu4LmMKc6Zk2V51qLReYMY5vF9mt7HzYkkFo"                    # ← replace
 
 from macro_engine     import MacroEngine
 from action_engine    import ActionEngine
@@ -272,6 +274,7 @@ class API:
         return {"status": "running", "from_line": line}
 
     def _run_script_from_line_thread(self, script: str, line: int, repeat: int):
+        self._auto_focus_target()
         try:
             def on_finish():
                 self._script_running = False
@@ -304,6 +307,8 @@ class API:
                     self._window.evaluate_js("onScriptError()")
             except Exception:
                 pass
+
+    def _auto_focus_target(self):
         """Focus the target game window if auto_focus is enabled and a window is configured."""
         try:
             settings = self.get_movement_settings()
@@ -320,6 +325,7 @@ class API:
             self.logger.log(f"auto_focus error: {e}", level="WARN")
 
     def _run_script_thread(self, script: str, repeat: int):
+        self._auto_focus_target()
         try:
             def on_finish():
                 self._script_running = False
@@ -1494,7 +1500,7 @@ class API:
 
         # Minimise the webview window so it doesn't block screen access
         try:
-            self.window.minimize()
+            self._window.minimize()
         except Exception:
             pass
 
@@ -1531,7 +1537,7 @@ class API:
         self._eyedropper_active = False
         color = getattr(self, "_eyedropper_color", None)
         try:
-            self.window.restore()
+            self._window.restore()
         except Exception:
             pass
         return {"status": "ok", "color": color if confirm else None}
@@ -1738,42 +1744,52 @@ class API:
 
     def check_for_update(self):
         """
-        Check GitHub Releases for a newer version.
-        Returns { status, current, latest, update_available, release_url, release_notes }
-        TODO: Replace GITHUB_USER and GITHUB_REPO with your actual values.
+        Check Supabase control table for a newer version.
+        Returns { status, current, latest, update_available, download_url }
+        No longer uses GitHub — completely private.
         """
         import urllib.request, json
 
-        GITHUB_USER = "kramogs-bug"   # TODO: replace
-        GITHUB_REPO = "AMYT-app"          # TODO: replace
+        DEFAULTS = {
+            "status":           "offline",
+            "current":          APP_VERSION,
+            "latest":           APP_VERSION,
+            "update_available": False,
+            "download_url":     "",
+        }
 
         try:
+            # Query Supabase REST API directly — no SDK needed in the app
             url = (
-                f"https://api.github.com/repos/"
-                f"{GITHUB_USER}/{GITHUB_REPO}/releases/latest"
+                f"{SUPABASE_URL}/rest/v1/control"
+                f"?key=in.(latest_version,download_url,zip_url)"
+                f"&select=key,value"
             )
             req = urllib.request.Request(
-                url, headers={"User-Agent": f"AMYT/{APP_VERSION}"}
+                url,
+                headers={
+                    "apikey":        SUPABASE_ANON_KEY,
+                    "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
+                    "User-Agent":    f"AMYT/{APP_VERSION}",
+                }
             )
             with urllib.request.urlopen(req, timeout=5) as r:
-                data = json.loads(r.read())
+                rows = json.loads(r.read())
 
-            latest = data.get("tag_name", "").lstrip("v").strip()
+            cfg = {row["key"]: row["value"] for row in rows}
+            latest = cfg.get("latest_version", "").strip().lstrip("v")
+
             if not latest:
-                return {"status": "no_release"}
+                return {**DEFAULTS, "status": "no_release"}
 
             def _ver(v):
                 try:
-                    return tuple(int(x) for x in v.split("."))
+                    return tuple(int(x) for x in str(v).split("."))
                 except Exception:
                     return (0,)
 
             update_available = _ver(latest) > _ver(APP_VERSION)
-
-            # Trim release notes to a readable length
-            notes = (data.get("body") or "").strip()
-            if len(notes) > 400:
-                notes = notes[:400].rsplit("\n", 1)[0] + "\n…"
+            dl_url = cfg.get("download_url", "")
 
             self.logger.log(
                 f"Update check: current={APP_VERSION} latest={latest} "
@@ -1784,71 +1800,83 @@ class API:
                 "current":          APP_VERSION,
                 "latest":           latest,
                 "update_available": update_available,
-                "release_url":      data.get("html_url", ""),
-                "release_notes":    notes,
+                "download_url":     dl_url,
+                "release_url":      dl_url,   # kept for JS compatibility
+                "release_notes":    "",       # no longer from GitHub
             }
 
         except urllib.error.URLError as e:
-            # Silently fail — no internet or GitHub unreachable
             self.logger.log(f"Update check skipped: {e}", level="WARN")
-            return {"status": "offline"}
+            return {**DEFAULTS, "status": "offline"}
         except Exception as e:
             self.logger.log(f"Update check error: {e}", level="WARN")
-            return {"status": "error", "message": str(e)}
+            return {**DEFAULTS, "status": "error", "message": str(e)}
+
+
+    # ══════════════════════════════════════════════════════════════════════════
+    #  PASTE THIS ENTIRE METHOD into your API class — replaces fetch_control_config
+    # ══════════════════════════════════════════════════════════════════════════
 
     def fetch_control_config(self):
         """
-        Fetch control.json from GitHub raw content.
-        This lets you remotely:
-          - Disable the app for everyone  (app_enabled: false)
-          - Force a minimum version       (min_version: "1.x.x")
-          - Force users to update         (force_update: true)
-          - Broadcast a message           (message: "...")
-        Returns the parsed config dict, or safe defaults if unreachable.
+        Fetch remote control config from Supabase 'control' table.
+        Replaces the old GitHub raw control.json approach.
+
+        Lets you remotely:
+        - Disable the app for everyone   (app_enabled = 'false')
+        - Force a minimum version        (min_version = '1.x.x')
+        - Force users to update          (force_update = 'true')
+        - Broadcast a message            (message = '...')
+        - Override download URL          (download_url = 'https://...')
         """
         import urllib.request, json
 
-        GITHUB_USER = "kramogs-bug"
-        GITHUB_REPO = "AMYT-app"
-        BRANCH      = "main"
-
         DEFAULTS = {
-            "app_enabled":   True,
-            "min_version":   "0.0.0",
+            "app_enabled":    True,
+            "min_version":    "0.0.0",
             "latest_version": APP_VERSION,
-            "force_update":  False,
-            "message":       "",
-            "download_url":  f"https://github.com/{GITHUB_USER}/{GITHUB_REPO}/releases/latest",
+            "force_update":   False,
+            "message":        "",
+            "download_url":   "",
         }
 
         try:
+            # Pull all rows from the control table
             url = (
-                f"https://raw.githubusercontent.com/"
-                f"{GITHUB_USER}/{GITHUB_REPO}/{BRANCH}/control.json"
+                f"{SUPABASE_URL}/rest/v1/control"
+                f"?select=key,value"
             )
             req = urllib.request.Request(
-                url, headers={"User-Agent": f"AMYT/{APP_VERSION}"}
+                url,
+                headers={
+                    "apikey":        SUPABASE_ANON_KEY,
+                    "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
+                    "User-Agent":    f"AMYT/{APP_VERSION}",
+                }
             )
             with urllib.request.urlopen(req, timeout=5) as r:
-                config = json.loads(r.read())
+                rows = json.loads(r.read())
 
-            # Merge with defaults so missing keys don't cause KeyErrors
-            DEFAULTS.update(config)
-            self.logger.log(f"Control config fetched: {DEFAULTS}")
-            return {"status": "ok", "config": DEFAULTS}
+            cfg_raw = {row["key"]: row["value"] for row in rows}
+
+            # Cast types — Supabase stores everything as strings
+            cfg = {
+                "app_enabled":    cfg_raw.get("app_enabled",    "true").lower() == "true",
+                "min_version":    cfg_raw.get("min_version",    DEFAULTS["min_version"]),
+                "latest_version": cfg_raw.get("latest_version", APP_VERSION),
+                "force_update":   cfg_raw.get("force_update",   "false").lower() == "true",
+                "message":        cfg_raw.get("message",        ""),
+                "download_url":   cfg_raw.get("download_url",   ""),
+            }
+
+            self.logger.log(f"Control config fetched from Supabase: {cfg}")
+            return {"status": "ok", "config": cfg}
 
         except Exception as e:
-            self.logger.log(f"Control config fetch failed (using defaults): {e}", level="WARN")
+            self.logger.log(
+                f"Control config fetch failed (using defaults): {e}", level="WARN"
+            )
             return {"status": "offline", "config": DEFAULTS}
-
-    def open_url(self, url: str):
-        """Open a URL in the user's default browser."""
-        import webbrowser
-        try:
-            webbrowser.open(url)
-            return {"status": "ok"}
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
 
     # ── WINDOW CONTROL ────────────────────────────────────────
 

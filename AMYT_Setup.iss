@@ -17,7 +17,7 @@
 ; ============================================================
 
 #define AppName    "AMYT"
-#define AppVersion "1.0.1"
+#define AppVersion "1.1.0"
 #define AppExeName "AMYT.exe"
 #define AppURL     "https://github.com/kramogs-bug/AMYT-app"
 #define BuildDir   "dist\AMYT"

@@ -285,6 +285,12 @@ class MacroEngine:
         with self._state_lock:
             self._mouse_held = False
 
+        # Reset motion-gate / confidence state so stale frames from the previous
+        # run (possibly captured in a different thread) don't suppress detections
+        # on the very first frame of this run.
+        if hasattr(self.action, 'detector'):
+            self.action.detector.reset_motion_state()
+
         lines, original_indices = self._prepare_lines(script)
 
         # Find the first processed-line index whose original index >= start_from_line
@@ -318,6 +324,9 @@ class MacroEngine:
 
         with self._state_lock:
             self._mouse_held = False
+
+        if hasattr(self.action, 'detector'):
+            self.action.detector.reset_motion_state()
 
         lines, original_indices = self._prepare_lines(script)
         if self._window:
@@ -1357,7 +1366,7 @@ class MacroEngine:
                 self._execute_find_action(cmd, evaled_args)
 
             elif cmd == "NAVIGATE_TO_IMAGE":
-                # ── Argument parsing ──────────────────────────────────
+                # ── Argument parsing (unchanged) ──────────────────────
                 template           = evaled_args[0]
                 confidence         = 0.8
                 offset_x           = 0
@@ -1366,51 +1375,49 @@ class MacroEngine:
                 arrival_region     = None
                 arrival_region_h   = None
                 arrival_confidence = None
-                miss_tolerance     = None  # None = use settings default (3)
+                miss_tolerance     = None
 
                 remaining = list(evaled_args[1:])
 
-                # keyword args first
                 kw_consumed = set()
                 for i, arg in enumerate(remaining):
                     if not isinstance(arg, str):
                         continue
                     low = arg.lower()
-                    if low.startswith('confidence='):
-                        try: confidence = float(arg.split('=')[1])
+                    if low.startswith("confidence="):
+                        try: confidence = float(arg.split("=")[1])
                         except: pass
                         kw_consumed.add(i)
-                    elif low.startswith('offsetx='):
-                        try: offset_x = int(arg.split('=')[1])
+                    elif low.startswith("offsetx="):
+                        try: offset_x = int(arg.split("=")[1])
                         except: pass
                         kw_consumed.add(i)
-                    elif low.startswith('offsety='):
-                        try: offset_y = int(arg.split('=')[1])
+                    elif low.startswith("offsety="):
+                        try: offset_y = int(arg.split("=")[1])
                         except: pass
                         kw_consumed.add(i)
-                    elif low.startswith('timeout='):
-                        try: nav_timeout = float(arg.split('=')[1])
+                    elif low.startswith("timeout="):
+                        try: nav_timeout = float(arg.split("=")[1])
                         except: pass
                         kw_consumed.add(i)
-                    elif low.startswith('arrival_region='):
-                        try: arrival_region = int(arg.split('=')[1])
+                    elif low.startswith("arrival_region="):
+                        try: arrival_region = int(arg.split("=")[1])
                         except: pass
                         kw_consumed.add(i)
-                    elif low.startswith('arrival_region_h='):
-                        try: arrival_region_h = int(arg.split('=')[1])
+                    elif low.startswith("arrival_region_h="):
+                        try: arrival_region_h = int(arg.split("=")[1])
                         except: pass
                         kw_consumed.add(i)
-                    elif low.startswith('arrival_confidence='):
-                        try: arrival_confidence = float(arg.split('=')[1])
+                    elif low.startswith("arrival_confidence="):
+                        try: arrival_confidence = float(arg.split("=")[1])
                         except: pass
                         kw_consumed.add(i)
-                    elif low.startswith('miss_tolerance='):
-                        try: miss_tolerance = int(arg.split('=')[1])
+                    elif low.startswith("miss_tolerance="):
+                        try: miss_tolerance = int(arg.split("=")[1])
                         except: pass
                         kw_consumed.add(i)
                 remaining = [a for i, a in enumerate(remaining) if i not in kw_consumed]
 
-                # positional: confidence [offsetX offsetY] [timeout]
                 pos = [a for a in remaining if isinstance(a, (int, float))]
                 if len(pos) >= 1: confidence  = float(pos[0])
                 if len(pos) >= 2: offset_x    = int(pos[1])
@@ -1424,203 +1431,72 @@ class MacroEngine:
                 settings           = self._api.get_movement_settings()
                 player_x           = settings["player_x"]
                 player_y           = settings["player_y"]
-                key_up             = settings["key_up"]
-                key_down           = settings["key_down"]
-                key_left           = settings["key_left"]
-                key_right          = settings["key_right"]
-                step_time          = settings["step_time"]
-                stop_radius        = settings["stop_radius"]
-                stuck_threshold    = settings.get("stuck_threshold", 3)
-                # Arrival proximity — fall back to settings if not in script args
+
                 if arrival_region is None:
                     arrival_region = int(settings.get("arrival_region", 200))
                 if arrival_region_h is None:
                     arrival_region_h = int(settings.get("arrival_region_h", arrival_region))
                 if arrival_confidence is None:
                     arrival_confidence = float(settings.get("arrival_confidence", 0.85))
-                # Miss tolerance — how many consecutive misses before giving up
                 if miss_tolerance is None:
-                    miss_tolerance = int(settings.get("miss_tolerance", 3))
-                miss_tolerance = max(1, miss_tolerance)
+                    miss_tolerance = int(settings.get("miss_tolerance", 5))
 
-                # ── Navigation loop ───────────────────────────────────
-                stuck_count    = 0
-                prev_distance  = None
-                start_time     = time.time()
-                step_counter   = 0
-                miss_count     = 0
+                # ── Build nav settings dict (superset of movement settings) ──
+                nav_settings = dict(settings)
+                nav_settings.update({
+                    "arrival_region":     arrival_region,
+                    "arrival_region_h":   arrival_region_h,
+                    "arrival_confidence": arrival_confidence,
+                    "miss_tolerance":     miss_tolerance,
+                })
 
-                self.logger.log(
-                    f"NAVIGATE_TO_IMAGE: heading for '{template}' "
-                    f"(confidence={confidence}, timeout={nav_timeout}s, "
-                    f"miss_tolerance={miss_tolerance}, "
-                    f"arrival_region={arrival_region}×{arrival_region_h}px, arrival_confidence={arrival_confidence})"
+                # ── Instantiate MovementAI (Kalman + state machine) ───────
+                from movement_ai import MovementAI
+                nav = MovementAI(
+                    keyboard=self.action.keyboard,
+                    detector=self.action.detector,
+                    learner=self.learner,
+                    logger=self.logger,
+                    settings=nav_settings,
                 )
 
-                while not self._stop_event.is_set():
+                self.logger.log(
+                    f"NAVIGATE_TO_IMAGE: heading for \'{template}\' "
+                    f"(confidence={confidence}, timeout={nav_timeout}s, "
+                    f"miss_tolerance={miss_tolerance}, "
+                    f"arrival_region={arrival_region}x{arrival_region_h}px, "
+                    f"arrival_confidence={arrival_confidence})"
+                )
 
-                    # ── Timeout check ─────────────────────────────────
-                    if nav_timeout > 0 and (time.time() - start_time) >= nav_timeout:
-                        self.logger.log(
-                            f"NAVIGATE_TO_IMAGE: timeout ({nav_timeout}s) reached "
-                            f"without reaching '{template}'.", level="WARN"
-                        )
-                        break
-
-                    # ── Dynamic re-detection interval ─────────────────
-                    # Far away: re-detect every 3 steps to save CPU.
-                    # Close (within 3× stop_radius): re-detect every step.
-                    redetect = True
-                    if prev_distance is not None and prev_distance > stop_radius * 3:
-                        redetect = (step_counter % 3 == 0)
-
-                    if redetect:
-                        region   = self.learner.get_best_region(template)
-                        location = self.action.detector.find_on_screen(
-                            template, confidence, region=region,
-                            bypass_gates=True
-                        )
-                        if not location:
-                            miss_count += 1
+                start_time = time.time()
+                try:
+                    while not self._stop_event.is_set():
+                        # Timeout guard
+                        if nav_timeout > 0 and (time.time() - start_time) >= nav_timeout:
                             self.logger.log(
-                                f"NAVIGATE_TO_IMAGE: '{template}' not found "
-                                f"(miss {miss_count}/{miss_tolerance})", level="WARN"
+                                f"NAVIGATE_TO_IMAGE: timeout ({nav_timeout}s) reached "
+                                f"without reaching \'{template}\'.", level="WARN"
                             )
-                            if miss_count >= miss_tolerance:
-                                self.logger.log(
-                                    f"NAVIGATE_TO_IMAGE: '{template}' lost after "
-                                    f"{miss_tolerance} consecutive misses — stopping.", level="WARN"
-                                )
-                                break
-                            time.sleep(step_time)
-                            step_counter += 1
-                            continue
-                        miss_count = 0
+                            break
 
-                        target_x = location["x"] + offset_x
-                        target_y = location["y"] + offset_y
+                        result = nav.step(template, confidence, offset_x, offset_y)
 
-                    dx       = target_x - player_x
-                    dy       = target_y - player_y
-                    distance = (dx*dx + dy*dy) ** 0.5
-
-                    self.logger.log(
-                        f"NAVIGATE_TO_IMAGE: target=({target_x},{target_y}) "
-                        f"dx={dx:+.0f} dy={dy:+.0f} dist={distance:.1f}"
-                    )
-
-                    # ── Proximity arrival check ────────────────────────
-                    # Build a crop region centred on the player and check
-                    # if the target is visible (and confident) inside it.
-                    # This is smarter than a fixed pixel radius because it
-                    # uses the actual image content, not just screen coords.
-                    half_w = arrival_region   // 2
-                    half_h = arrival_region_h // 2
-                    import ctypes as _ctypes
-                    try:
-                        _u32 = _ctypes.windll.user32
-                        sw, sh = _u32.GetSystemMetrics(0), _u32.GetSystemMetrics(1)
-                    except Exception:
-                        sw, sh = 1920, 1080
-
-                    px_region = [
-                        max(0, player_x - half_w),
-                        max(0, player_y - half_h),
-                        min(arrival_region,   sw - max(0, player_x - half_w)),
-                        min(arrival_region_h, sh - max(0, player_y - half_h)),
-                    ]
-
-                    proximity_hit = self.action.detector.find_on_screen(
-                        template, arrival_confidence,
-                        region=px_region,
-                        bypass_gates=True
-                    )
-                    if proximity_hit:
-                        self.logger.log(
-                            f"NAVIGATE_TO_IMAGE: '{template}' detected inside "
-                            f"player proximity region "
-                            f"(conf={proximity_hit['confidence']:.2f} >= {arrival_confidence}) "
-                            f"— arrived!"
-                        )
-                        break
-
-                    # ── Fallback pixel-distance arrival ───────────────
-                    if abs(dx) <= stop_radius and abs(dy) <= stop_radius:
-                        self.logger.log("NAVIGATE_TO_IMAGE: Reached target (pixel radius).")
-                        break
-
-                    # ── Stuck detection ───────────────────────────────
-                    if prev_distance is not None:
-                        if distance >= prev_distance - 1:
-                            stuck_count += 1
-                        else:
-                            stuck_count = 0
-                    prev_distance = distance
-
-                    if stuck_count >= stuck_threshold:
-                        self.logger.log(
-                            f"NAVIGATE_TO_IMAGE: Stuck (count={stuck_count}), "
-                            "performing random diagonal dodge"
-                        )
-                        dodge_dirs = []
-                        axes = [(key_left, key_right, dx), (key_up, key_down, dy)]
-                        random.shuffle(axes)
-                        for neg_k, pos_k, delta in axes:
-                            dodge_dirs.append(random.choice([neg_k, pos_k]))
-                        for k in dodge_dirs:
-                            self.action.keyboard.hold(k)
-                        time.sleep(step_time * random.uniform(0.4, 0.8))
-                        for k in dodge_dirs:
-                            self.action.keyboard.release(k)
-                        time.sleep(0.08)
-                        stuck_count   = 0
-                        prev_distance = None
-                        step_counter  = 0
-                        continue
-
-                    # ── Proportional step time ────────────────────────
-                    # Slow down as we enter the arrival_region so we don't overshoot.
-                    _arr_max = max(arrival_region, arrival_region_h)
-                    if distance < _arr_max:
-                        proximity_factor = min(1.0, max(0.15, distance / _arr_max))
-                    else:
-                        proximity_factor = min(1.0, max(0.25, distance / 100.0))
-                    hold_duration = step_time * proximity_factor
-
-                    # ── Key selection ─────────────────────────────────
-                    approach_zone = distance < stop_radius * 2
-
-                    hold_keys = []
-                    if approach_zone:
-                        if abs(dx) >= abs(dy):
-                            if dx > stop_radius:   hold_keys.append(key_right)
-                            elif dx < -stop_radius: hold_keys.append(key_left)
-                        else:
-                            if dy > stop_radius:   hold_keys.append(key_down)
-                            elif dy < -stop_radius: hold_keys.append(key_up)
-                    else:
-                        if dx > stop_radius:   hold_keys.append(key_right)
-                        elif dx < -stop_radius: hold_keys.append(key_left)
-                        if dy > stop_radius:   hold_keys.append(key_down)
-                        elif dy < -stop_radius: hold_keys.append(key_up)
-
-                    if hold_keys:
-                        self.logger.log(
-                            f"NAVIGATE_TO_IMAGE: keys={hold_keys} "
-                            f"hold={hold_duration:.3f}s "
-                            f"factor={proximity_factor:.2f}"
-                            + (" [slowing]" if distance < _arr_max else "")
-                        )
-                        for k in hold_keys:
-                            self.action.keyboard.hold(k)
-                        time.sleep(hold_duration)
-                        for k in hold_keys:
-                            self.action.keyboard.release(k)
-                    else:
-                        time.sleep(step_time)
-
-                    time.sleep(random.uniform(0.03, 0.07))
-                    step_counter += 1
+                        if result == "arrived":
+                            self.logger.log(
+                                f"NAVIGATE_TO_IMAGE: arrived at \'{template}\' "
+                                f"after {time.time() - start_time:.1f}s"
+                            )
+                            break
+                        elif result == "lost":
+                            self.logger.log(
+                                f"NAVIGATE_TO_IMAGE: \'{template}\' lost — stopping.",
+                                level="WARN"
+                            )
+                            break
+                        # result == "continue" — keep looping
+                finally:
+                    # CRITICAL: always release keys even on stop/exception/timeout
+                    nav.cleanup()
 
             elif cmd.startswith("TEXT_"):
                 # Extract base action: CLICK, DOUBLE_CLICK, etc.

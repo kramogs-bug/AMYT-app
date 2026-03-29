@@ -174,7 +174,7 @@
         background:rgba(133,199,154,0.18);color:rgba(133,199,154,0.85);
         border-radius:4px;padding:1px 5px;margin-left:4px;align-self:center;
         border:1px solid rgba(133,199,154,0.25);
-      ">v1.0.0</span>
+      ">v1.1.0</span>
     </div>
 
     <!-- Status -->
@@ -279,7 +279,7 @@
                   title="How many times to run. Set to 0 to loop forever until Stop."
                   oninput="document.getElementById('repeat-hint').textContent = this.value=='0' ? '\u221e loops forever' : this.value==1 ? 'run once' : 'times';" />
                 <span id="repeat-hint" class="repeat-hint">run once</span>
-                <span class="repeat-inf-hint">(0 = \u221e)</span>
+                <span class="repeat-inf-hint">(0 = &infin;)</span>
               </div>
               <!-- Primary run action — full-width hero button -->
               <button class="btn btn-play full-width ctrl-run-btn" onclick="runScript()" title="Run the full script (Ctrl+R)" data-tip="Run script  [CTRL+R]">
@@ -1697,6 +1697,7 @@
 <script src="js/templates.js"></script><!-- template manager, preview, crop, quick detect -->
 <script src="js/macro.js"></script>    <!-- recording, execution, logs, learning data -->
 <script src="js/builder.js"></script>  <!-- all command builder modals -->
+<script src="js/diagram.js"></script> <!-- visual diagram / flowchart view -->
 
 <!-- Sidebar toggle + Accordion (small additions, no conflict with modules) -->
 <script>
@@ -3756,7 +3757,7 @@ window._amytForceUpdate = function(data) {
       You are running version <strong>${data.current}</strong>.<br>
       Version <strong>${data.min_version}</strong> or higher is required to continue.
     </div>
-    <button onclick="window.pywebview.api.open_url('${data.download_url}')"
+    <button onclick="window.pywebview.api.download_url('${data.download_url}')"
       style="background:#f39c12;color:#000;border:none;padding:12px 32px;border-radius:8px;font-size:15px;font-weight:700;cursor:pointer;pointer-events:auto"
       onmouseover="this.style.background='#d4870e'" onmouseout="this.style.background='#f39c12'">
       \u2193 Download Update

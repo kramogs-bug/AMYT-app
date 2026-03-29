@@ -3,5 +3,21 @@
   "shortcut_stop": "ctrl+q",
   "shortcut_pause": "ctrl+p",
   "auto_learning_enabled": false,
-  "log_cooldown": 10
+  "log_cooldown": 10,
+  "movement": {
+    "player_x": 481,
+    "player_y": 530,
+    "key_up": "up",
+    "key_down": "down",
+    "key_left": "left",
+    "key_right": "right",
+    "step_time": 0.5,
+    "stop_radius": 20,
+    "stuck_threshold": 3,
+    "arrival_region": 150,
+    "arrival_region_h": 150,
+    "arrival_confidence": 0.85,
+    "target_window": "",
+    "auto_focus": true
+  }
 }
